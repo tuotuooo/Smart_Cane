@@ -118,6 +118,49 @@
 
 ---
 
+### 1.5c 裸打印扫描取 Hermes 字符串 → 造出假串
+
+**现象**：把 `stringStorage` 区当连续可打印字节扫，得到 `oauth2`、`one_login`、`geetest`、
+`AUTH_INVALID_CODE` 之类的"业务串"，看着很真，写进报告。
+
+**原因**：HBC 的字符串存储是**连续拼接**的（无分隔符，靠 string table 的 offset 定位）。
+按可打印区间切分必然**把相邻的两三个串粘成一条**，于是跨边界拼出并不存在的词。
+
+**验证方法（必做）**：
+
+```python
+d = open("main.jsbundle","rb").read()
+for k in [b"oauth2", b"one_login", b"geetest"]:
+    print(k, d.count(k))     # 全 0 → 之前的"发现"是假的
+```
+
+`[案例]` 森空岛：`oauth2` / `one_login` / `geetest` 在 bundle 原始字节里 **0 命中**；
+`one_login` 的真实来源是 Java 层极验 SDK 的资源名 `gt_one_login_btn_*`。
+后续改用字符串表重提，得到 23,045 条准确结果。
+
+**正确做法**：用 `hermes-dec` 反汇编（它按 string table 解码），再 `hbc_index.py` 索引。
+
+---
+
+### 1.5d shell glob `classes[0-9].dex` 漏掉 `classes.dex`
+
+**现象**：写脚本扫全部 DEX 找某个串，结果报"0 命中"，据此宣布该串不存在。
+
+**原因**：`classes[0-9].dex` 匹配 `classes2.dex`…`classes9.dex`，**不匹配没有数字的
+`classes.dex`**——而主 DEX 恰恰就是它。
+
+**正确做法**：显式列名，或用 `classes*.dex`：
+
+```python
+files = [f"classes.dex"] + [f"classes{i}.dex" for i in range(2, 6)]   # 显式
+# 或
+glob.glob("**/classes*.dex", recursive=True)
+```
+
+`[案例]` 森空岛：本轮一度因此误判"`one_login` 端点不存在"，差点写成第四条错误结论。
+
+---
+
 ### 1.6 没有 cryptography 就放弃读证书
 
 **现象**：`import cryptography` 失败，于是只报"无法解析证书"。

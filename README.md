@@ -49,6 +49,10 @@ python apk-runtime-dump/scripts/dex_fix.py out/dex_0.bin      # 规范化后可�
 
 # 4. dump 出来的裸 DEX 直接回静态链分析
 python apk-analyzer/scripts/apk_analyze.py dexfile out/dex_0_fixed.dex --keyword license
+
+# 5. 确认是未加密 Hermes 后，反汇编 + 索引 JS 层（拿到域名 / API / 关键函数）
+hermes-dec ... > main.disasm.txt          # 见 apk-analyzer/SKILL.md 第 8 步
+python apk-analyzer/scripts/hbc_index.py main.disasm.txt -o js_out/
 ```
 
 ---

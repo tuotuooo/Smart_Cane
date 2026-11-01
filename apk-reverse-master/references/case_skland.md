@@ -108,11 +108,45 @@ identifierCount  = 11266
 stringStorageSize= 463042
 ```
 
-**结论：这是一份普通的、未加密的 Hermes 字节码。** JS 层完全静态可达，
+结论：**这是一份普通的、未加密的 Hermes 字节码。** JS 层完全静态可达，
 用 `hbcdump` / `hermes-dec` 即可反汇编。之前"加密 + XOR 密钥 + 双区容器"的三层说法
 全部作废（见第 1 节弯路二与 §7 的连锁复盘）。
 
-明文字符串区仍可直接提取：域名、RN 组件名、深链 `skland://`、错误文案都能拿到。
+### 2.4 实际反汇编结果（走通了整条 JS 链）
+
+用 `hermes-dec`（自带 hbc90 opcode 表，与版本精确匹配）：
+
+| 项 | 结果 |
+|---|---|
+| 反汇编覆盖 | **18,204 / 18,204 函数，零错误** |
+| 产物 | `main.disasm.txt` 49.7 MB / 763,114 行；`main.decomp.js` 8.7 MB |
+| 耗时 | 各约 1 分钟内 |
+| 字符串 | 表内 23,045 条；被指令引用 14,824 条 |
+
+**直接产出的业务情报**（`hbc_index.py` 索引后）：
+
+1. **环境配置中心（一个函数搞定）**：内联 `prod|live|pre|dev|testin|staging` 六套环境，
+   并把环境名拼进域名 → 生产包里同时带着 `chart-skland-testin` / `*-staging` / `*-dev`
+   等预发布地址，另有 2 个 **http 明文**基址（`http://chimera.hypergryph.net`、
+   `http://sfmaple-skland.hypergryph.net`）。
+2. **调试页随包分发**：`skland://rn?moduleName=TestPage` 直达一个原生桥调试界面
+   （发事件 / 加监听 / 打开操作面板 / 跳转 edit），这是最省事的突破口。
+3. **JS 侧没有 root 检测**：全表搜 `frida/magisk/xposed/tamper` 无命中；唯一的 `isRoot`
+   是 **mobx-state-tree 的节点 API**（`protect()` 报 "can only be invoked on root nodes"），
+   与设备 root 无关。→ 反 root 全在 Java/native 层，hook JS 绕不过去。
+4. **热更新是自研的**：`/api/v1/rn/version/check`，**不是 CodePush**（全表无 CodePush 串）。
+
+**关键教训**：真拿到 JS 层后，很多"看起来像安全机制"的东西只是框架 API 重名。
+`isRoot` 是 mobx-state-tree、`Root` 是 React Fiber、`scope` 是 Sentry —— 报结论前先看**谁在用**。
+
+### 2.5 字符串提取的两条硬规矩（本轮代价）
+
+| 错误做法 | 后果 |
+|---|---|
+| 裸打印扫描 stringStorage | 相邻串粘连，造出 `oauth2`/`one_login`/`geetest` 等**假的业务串**（原始字节 0 命中） |
+| `glob("classes[0-9].dex")` | **漏掉 `classes.dex`**，一度误判"某端点不存在" |
+
+两条都已写进 `pitfalls.md` 的 1.5c / 1.5d。
 
 ---
 

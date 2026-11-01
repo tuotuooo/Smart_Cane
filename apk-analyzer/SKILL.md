@@ -48,6 +48,9 @@ python <skill>/scripts/apk_analyze.py bundle <apk> [--json]
 
 # 直接分析裸 .dex（运行时脱壳产物，无需原始 APK）
 python <skill>/scripts/apk_analyze.py dexfile "memdump/dex_*.bin" [--keyword license] [--out hit.txt] [--json]
+
+# 【JS 层】把 hermes-dec 的反汇编文本索引成业务情报（字符串→函数、域名、API、关键词分组）
+python <skill>/scripts/hbc_index.py main.disasm.txt -o js_out/
 ```
 
 退出码：0=成功；非 0=APK 不存在或 Manifest 解析失败（写入 stderr）。
@@ -78,6 +81,21 @@ python <skill>/scripts/apk_analyze.py dexfile "memdump/dex_*.bin" [--keyword lic
    logcat 验证静态发现的授权/加密/壳行为是否真的触发。
 7. **脱壳产物回炉**：运行时 dump 出的裸 DEX 用 `dexfile` 子命令直接分析，无需原始 APK：
    `python <skill>/scripts/apk_analyze.py dexfile "memdump/dex_*.bin" --keyword license`
+8. **JS 层深挖（确认未加密后）**：两步走，反汇编用外部工具，索引用本 skill。
+   ```bash
+   # ① 反汇编（hermes-dec，AGPL-3.0，纯标准库；自带 hbc51~hbc99 opcode 表）
+   PYTHONPATH=<hermes-dec>/src python -m hermes_dec.disassembly.hbc_disassembler \
+       main.jsbundle > main.disasm.txt
+   # ② 索引成业务情报
+   python <skill>/scripts/hbc_index.py main.disasm.txt -o js_out/
+   ```
+   产出 `endpoints.txt`（域名/API）、`keyfuncs.txt`（按 auth/risk/network/storage/update/deeplink
+   分组定位到**具体函数号**）、`strings_all.txt`、`summary.json`。拿到函数号后直接
+   `grep "\[Function #N"` 读该函数指令序列。
+   - 想找"环境配置/接口基址"，优先看引用了多个域名、且带 `ENV / prod / dev / staging` 字样的函数。
+   - 想找"是否有反 root 检测"，在 JS 里搜 `frida/magisk/xposed/tamper/safetynet`；若只命中
+     `isRoot`，注意那多半是 **mobx-state-tree 的节点 API**（`protect()` 会报
+     "can only be invoked on root nodes"），与设备 root 无关。
 
 ## Reference
 
@@ -92,6 +110,9 @@ python <skill>/scripts/apk_analyze.py dexfile "memdump/dex_*.bin" [--keyword lic
 - **关于 Hermes**：判断"是否加密"的唯一可靠依据是**标准魔数 + fileLength 自洽**，
   不是熵、不是 header XOR。历史上这里栽过三次跟头（错误的魔数常量 → 虚构的 XOR 密钥 →
   虚构的"双区加密容器"），脚本已改为按标准头部字段判定。
-- `bundle` 只做结构判定与明文串提取。要真正反汇编 Hermes 字节码，需外部的
-  `hbcdump` / `hermes-dec`（本 skill 不实现）。
+- `bundle` 只做**结构判定**。真正的反汇编需外部 `hermes-dec` / `hbcdump`；反汇编后的
+  **索引与业务归类由本 skill 的 `hbc_index.py` 完成**（纯标准库）。
+- **不要用裸打印扫描取 Hermes 字符串**：HBC 的 string storage 是连续拼接的，按可打印区间
+  切分会把相邻串粘成一条，造出 `oauth2` / `one_login` / `geetest` 这类**看似合理但 0 命中**的
+  假串（已实测证伪）。要拿准确字符串，走字符串表（`hermes-dec` 反汇编注解 / `hbc_index.py`）。
 - 本 skill 只做**静态**分析。HTTPS 抓包、内存脱壳、jadx 反编译等需配合其他工具。
