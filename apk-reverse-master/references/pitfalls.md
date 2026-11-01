@@ -324,9 +324,20 @@ glob.glob("**/classes*.dex", recursive=True)
 2. **先停再启**：`am force-stop` → `am start` → 立即扫，赶在检测定时器前；
 3. **hook 检测点**：Frida 拦 `java.io.File.exists` / `Runtime.exec` / `System.getProperty`。
 
-`[案例]` 森空岛：开 root 后**并没有**在启动阶段闪退，稳定停在 LoginActivity，
-所以 dump 顺利完成。检测代码（`su` 路径、`magisk`、`frida`、`ro.debuggable`、
-`Game signature`）确实存在，但触发点后置/被 patch。
+`[案例]` 森空岛：开 root 后**并没有**在启动阶段闪退，稳定停在 LoginActivity，dump 顺利完成。
+
+⚠️ **这个案例最初被写成了"检测存在但触发点后置/被 patch"——那是错的。** 后续用
+`dex_tool.py` 对每条 root 检测字符串做 `const-string → 所属方法` 反向定位，发现它们
+**没有一条来自业务代码**：`getRootState`/`magisk` 来自极光推送（`cn.jiguang`，内嵌 RootBeer），
+`test-keys`/`superuser`/`goldfish` 来自 Sentry，`frida` 来自极验（`com.geetest`），
+su 路径来自游戏加速器 `libdivider2.so`（检测到 root 只关 boost，不杀进程）。
+`com.hypergryph.*` 下**根本没有任何 root 检测类**。
+
+**教训（比技巧更重要）**：`grep` 到 `su`/`magisk`/`frida` 不等于"这个 App 会反 root"。
+第三方 SDK 会往你的样本里塞进大量这类字符串。**在下"它会检测"的结论前，必须把字符串
+反查到所属类和调用方**，确认是业务代码还是 SDK。否则整条推演都建在别人的代码上。
+
+对应做法：`python dex_tool.py str <dex> "magisk"` → 直接给出引用它的完整方法签名。
 
 ---
 
@@ -389,6 +400,42 @@ buf[8:12]  = adler32(buf[12:])              # checksum 覆盖 [0x0C, EOF)，含�
 **原因**：一个区域内常常**连续 mmap 了多个 DEX**，切到区域末尾就会吞掉后面。
 
 **正确做法**：严格按 `file_size` 切；同一区域内的多个 magic 各自切一份。
+
+---
+
+### 4.5 反汇编出来 `invoke {v3,v0,v0,v0}`、argc 是 16/32/48
+
+**现象**：自己写的 DEX 解码器跑出来的 `invoke-*` 参数个数离谱，寄存器列表尾部一堆 `v0`，
+但方法签名、字符串、跳转目标都能正常解析。
+
+**原因**：`invoke` 的 8 位 `AA`（argument word count，只用到 0–5）被**左移了 4 位**：
+
+```
+AA_实际 = AA_存储 >> 4
+```
+
+这是针对反编译器的编码混淆——高 4 位本来就空闲，左移不丢信息、可逆，但标准解码器会把
+`0x20` 当成 argc=32。
+
+**怎么确认是它、而不是自己算错边界**（两步，缺一不可）：
+
+1. **先证边界对**：按 `OPLEN` 表走完整段，必须**恰好**在最后一个 unit 收尾（如 41/41 对上
+   `return-void`）。边界错了不会有这种巧合。
+2. **再证字段变换**：用 `FEDC`（寄存器列表）做交叉校验——按 `AA>>4` 取 argc 后，
+   `regs[argc:]` 应全为 0。森空岛实测 **264,789 / 264,818 = 99.99%** 吻合，而直接取 `AA`
+   只有 19 条吻合。
+
+**别过度推广**：只改 `invoke`。同一份 DEX 里 `const-string`(0x1a)、`if-*`(0x38)、
+`return`(0x0f) 的低 nibble 分布完全正常（覆盖 0–15），说明它们**没有**被处理。
+先统计再动手，别整表套用。
+
+**现成工具**：`apk-analyzer/scripts/dex_tool.py` 已内置该修正，纯标准库、不需要 JRE/jadx：
+
+```
+python dex_tool.py str    <dex> "Game signature"     # 字符串 → 引用它的方法
+python dex_tool.py method <dex> "Lo0/w;" i           # 反汇编某个方法
+python dex_tool.py xref   <dex> "checkDeviceRoot"    # 谁调用了它
+```
 
 ---
 

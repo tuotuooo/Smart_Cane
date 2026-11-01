@@ -51,7 +51,17 @@ python <skill>/scripts/apk_analyze.py dexfile "memdump/dex_*.bin" [--keyword lic
 
 # 【JS 层】把 hermes-dec 的反汇编文本索引成业务情报（字符串→函数、域名、API、关键词分组）
 python <skill>/scripts/hbc_index.py main.disasm.txt -o js_out/
+
+# 【DEX 定点追踪】字符串 → 引用它的方法 → 反汇编；纯标准库，不需要 JRE/jadx
+python <skill>/scripts/dex_tool.py str    <dex> "Game signature"   # 谁引用了这个字符串
+python <skill>/scripts/dex_tool.py method <dex> "Lo0/w;" i         # 反汇编匹配的方法
+python <skill>/scripts/dex_tool.py xref   <dex> "checkDeviceRoot"  # 谁调用了这个方法
 ```
+
+> `dex_tool.py` 用于回答"这个字符串/方法到底是谁在用"——判 root 检测、反调试、硬编码密钥
+> 归属时**必须**做这一步，否则会把第三方 SDK 的行为错算成业务代码（坑见
+> `apk-reverse-master/references/pitfalls.md` §3.5 / §4.5）。
+> 它已内置本样本的 `invoke AA >> 4` 修正；换样本若出现 argc=16/32 这类异常，先按 §4.5 复核再改。
 
 退出码：0=成功；非 0=APK 不存在或 Manifest 解析失败（写入 stderr）。
 

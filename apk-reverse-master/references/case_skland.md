@@ -133,7 +133,7 @@ stringStorageSize= 463042
    （发事件 / 加监听 / 打开操作面板 / 跳转 edit），这是最省事的突破口。
 3. **JS 侧没有 root 检测**：全表搜 `frida/magisk/xposed/tamper` 无命中；唯一的 `isRoot`
    是 **mobx-state-tree 的节点 API**（`protect()` 报 "can only be invoked on root nodes"），
-   与设备 root 无关。→ 反 root 全在 Java/native 层，hook JS 绕不过去。
+   与设备 root 无关。
 4. **热更新是自研的**：`/api/v1/rn/version/check`，**不是 CodePush**（全表无 CodePush 串）。
 
 **关键教训**：真拿到 JS 层后，很多"看起来像安全机制"的东西只是框架 API 重名。
@@ -150,7 +150,7 @@ stringStorageSize= 463042
 
 ---
 
-## 3. 动态：root 没让它闪退
+## 3. 动态：root 没让它闪退 —— 而第三轮复核发现"闪退机制"根本不存在
 
 用户提醒"这 App 检测到 root 会闪退"。实测：
 
@@ -158,8 +158,30 @@ stringStorageSize= 463042
 am start → 进程稳定停在 LoginActivity（pid 2134 + 子进程 2160），未闪退
 ```
 
-原因推测：这个重签版把检测触发点后置到**登录/授权流程**，或已被 patch
-（与"debug 证书重签仍能跑"是同一个证据链）。
+第二轮的解释是"重签版把检测触发点后置或已 patch"。**这个解释是错的**——它假设了
+检测存在，但从未验证过检测代码属于谁。
+
+第三轮用 `dex_tool.py` 把每条 root 检测字符串反查到所属方法，结果全部落空：
+
+| 字符串 | 真实归属 |
+|---|---|
+| `getRootState`、`C_ROOT_STATE`、`magisk`、`com.topjohnwu.magisk` | `cn.jiguang`（极光推送，内嵌 RootBeer） |
+| `test-keys`、`goldfish`、`com.koushikdutta.superuser` | `io.sentry`（崩溃上报的设备上下文） |
+| `frida` | `com.geetest.sdk`（极验验证码风控） |
+| 11 条 su 路径 | `libdivider2.so`（游戏加速器 `NativeUtils.checkDeviceRoot`） |
+
+`com.hypergryph.*` 全量筛 `root|secur|anti|detect|protect|guard|tamper|integrity|cheat|risk`，
+命中的只有 `CheckinIcon`（签到）、`QRCodeCheckRequest`（扫码轮询）、`OneClickProtection`
+（隐私开关）、`SklAccountBanTipsDialog`（封号提示）—— **没有一个安全类**。
+
+加速器那段甚至能直接读出行为：检测到 root 就 `resp.i = false` 并打日志
+`"device root，close process boost"`，**只关加速，不杀进程**。
+壳 `libDexHelper.so` 有 `libc_ptrace`（反调试），但没有任何 root 相关字符串。
+
+**所以：代码层面不存在"root 就杀进程"的路径。** 不闪退是正常行为，不需要用"被 patch"解释。
+
+**顺带纠正 `Game signature`**：它不是 App 自校验，而是加速器判断"用户装的游戏是不是官方包"
+（`服务端白名单.containsAll(本地各包签名MD5)`），结果只影响 boost 开关。
 
 **这反而是最好的 dump 时机**：DEX 已解密，业务逻辑未触发，检测未生效。
 
@@ -242,12 +264,20 @@ code_off: valid=52,752  invalid=0
 | Hermes 字节码 | ✓ **静态已得** | 实测是标准未加密 HBC v90（18204 函数 / 23045 字符串） | 用 `hbcdump` / `hermes-dec` 反汇编即可，**不用登录** |
 | 证书期望指纹 | ✗ | 不在 manifest.mf，硬编码在 native/加密代码 | IDA 分析 `libDexHelper` |
 | SecNeo 解密算法 | ✗ | 在 native 层 | IDA / Frida hook |
-| 授权校验实现 | 部分 | 有 DEX，未反编译方法体 | jadx 读 `*_fixed.dex` |
+| 加速器选路协议 | 部分 | `Lo0/w;->i` 已反汇编，字段含义已解；服务端协议格式未取 | 抓包 |
+| App 自身的完整性校验 | 部分 | `manifest.mf` 已解出 2552 条哈希，比对逻辑未定位 | 继续 `dex_tool.py` 追引用 |
 
-**关键认知**：DEX 里已确认存在完整检测代码（`su` 多路径、`magisk`、`superuser`、
+**关键认知（第三轮修正）**：DEX 里确实能 `grep` 到 `su` 多路径、`magisk`、`superuser`、
 `frida`、`xposed`、`ro.debuggable`、`test-keys`、`EmulatorDetector`、`goldfish`、
-`getRootState` / `C_ROOT_STATE`、`Game signature`），但**触发点没在启动阶段生效**。
-"代码存在"与"此时会触发"是两件事，报告里必须分开写。
+`getRootState`、`Game signature`——但**这些没有一条属于业务代码**，全部来自极光推送、
+Sentry、极验、游戏加速器四个第三方 SDK。
+
+所以正确表述不是"代码存在但没触发"，而是：
+
+> **`com.hypergryph.*` 中不存在 root 检测。这个 App 不会因为设备 root 而退出。**
+
+"字符串存在"、"代码存在"、"业务代码存在"、"当前会触发"是四个不同层次的判断，
+**每上升一层都必须重新取证**。只做第一层就下第四层的结论，是本案例最大的教训。
 
 ---
 
@@ -264,3 +294,7 @@ code_off: valid=52,752  invalid=0
 9. **先 signature 后 checksum**，顺序反了永远算不对。
 10. **RN 引擎登录后才加载，但 bundle 可能本来就没加密**——先静态判，再决定要不要 dump。
 11. **报告必须有"没拿到什么"一节**，否则不可信。
+12. **`grep` 到 `su`/`magisk`/`frida` ≠ 这个 App 会反 root。** 必须用 `dex_tool.py str`
+    反查到所属类，确认是业务代码还是第三方 SDK。本案例四条线索全落空。
+13. **反编译出现非法操作数（argc=16/32）时，先证指令边界、再证字段变换**，
+    别急着改整张表——本案例只有 `invoke` 的 `AA` 被移位，其它指令正常。
