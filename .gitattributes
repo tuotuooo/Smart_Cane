@@ -1,0 +1,7 @@
+# 统一换行符，避免 Windows CRLF 污染脚本与文档
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.sh   text eol=lf
+*.json text eol=lf

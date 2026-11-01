@@ -1,0 +1,25 @@
+# 分析产物与二进制，不入库
+*.apk
+*.xapk
+*.apks
+*.dex
+*.bin
+*.hbc
+*.jsbundle
+memdump/
+out/
+analysis/
+*.zip
+*.xz
+
+# 运行时缓存
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
