@@ -1,4 +1,4 @@
-# APK 逆向四件套（Skill Matrix）
+# APK 逆向五件套（Skill Matrix）
 
 一套按「层次」拆开的 Android APK 逆向技能包。每一层都能单独使用，组合起来覆盖从连设备到出报告的完整链路。
 
@@ -14,23 +14,29 @@
 | 连接 | [`android-emulator-adb`](android-emulator-adb/) | 自动找 adb、连端口、设备画像（root/ABI/su/toybox） | 模拟器运行中 |
 | 静态 | [`apk-analyzer`](apk-analyzer/) | 身份·签名·加固判定·Manifest·DEX 线索·Hermes 判定 | 只需 Python 3.8+ |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
+| 流量 | [`android-https-capture`](android-https-capture/) | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
 
-依赖方向是单向的：编排层调用其余三层，三层之间互不依赖。
+依赖方向是单向的：编排层调用其余四层，四层之间互不依赖。
 
 ```
 apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 / 抓日志)
                       ├──> apk-analyzer           (静态初筛，无需设备)
-                      └──> apk-runtime-dump       (运行时脱壳，需 root)
-                                 └──> apk-analyzer dexfile   (dump 产物回到静态链)
+                      ├──> apk-runtime-dump       (运行时脱壳，需 root)
+                      │         └──> apk-analyzer dexfile   (dump 产物回到静态链)
+                      └──> android-https-capture  (看真实接口 / 报文)
 ```
 
 ---
 
-## 全部零外部依赖
+## 依赖
 
-四个脚本都只用 **Python 标准库**，本机不需要 `aapt` / `apktool` / `jadx` / `frida`。
+除**抓包层需要 `mitmproxy`**（`pip install mitmproxy -i https://mirrors.aliyun.com/pypi/simple/`，
+清华源没有这个包）外，其余脚本都只用 **Python 标准库**，本机不需要
+`aapt` / `apktool` / `jadx` / `frida`。
 
-这既是优点也是边界：拿不到反编译级源码，但足以完成加固判定、脱壳、字符串/类/端点情报提取。
+静态层拿不到反编译级源码，但足以完成加固判定、脱壳、字符串/类/端点情报提取；
+要看方法体级别的实现，用 `apk-analyzer` 里的 `dex_tool.py`（纯标准库反汇编器），
+或起 jadx。
 
 ---
 
@@ -53,6 +59,15 @@ python apk-analyzer/scripts/apk_analyze.py dexfile out/dex_0_fixed.dex --keyword
 # 5. 确认是未加密 Hermes 后，反汇编 + 索引 JS 层（拿到域名 / API / 关键函数）
 hermes-dec ... > main.disasm.txt          # 见 apk-analyzer/SKILL.md 第 8 步
 python apk-analyzer/scripts/hbc_index.py main.disasm.txt -o js_out/
+
+# 6. 抓真实流量（先判该走哪条证书路，再注入）
+python android-https-capture/scripts/cap.py info --pkg com.example.app
+python android-https-capture/scripts/cap.py install --pkg com.example.app
+python android-https-capture/scripts/cap.py proxy on     # 先把 App 起到目标页面！
+python android-https-capture/scripts/cap.py run --daemon
+python android-https-capture/scripts/cap.py dump flows.mitm --grep login --detail
+python android-https-capture/scripts/cap.py proxy off
+python android-https-capture/scripts/cap.py uninstall
 ```
 
 ---
@@ -60,7 +75,8 @@ python apk-analyzer/scripts/hbc_index.py main.disasm.txt -o js_out/
 ## 安装到 WorkBuddy
 
 ```bash
-cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master ~/.workbuddy/skills/
+cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
+      android-https-capture ~/.workbuddy/skills/
 ```
 
 每个目录都是完整的 skill（`SKILL.md` + `references/` + `scripts/`），可独立安装、独立加载。

@@ -52,7 +52,14 @@ agent_created: true
   │     4.5 dex_fix 规范化               验收：code_off invalid=0
   │
   └─[5] 动态验证（可选，但结论更硬）
-        logcat / 截屏 / 抓包，确认静态推断的行为真的发生
+        ├─ 5a logcat / 截屏 / UI dump  —— 确认静态推断的行为真的发生
+        └─ 5b 要看真实接口 → android-https-capture ── 需 root 或改包
+              5b.1 cap.py info          判该走哪条证书路（这是难点，不是抓包本身）
+              5b.2 cap.py install       注入系统 CA（targetSdk≥24 必需）
+              5b.3 cap.py proxy on      ⚠ 必须先启动 App 到目标页面，再开代理
+              5b.4 cap.py run --daemon  抓
+              5b.5 cap.py dump --grep --detail
+              验收：0 TLS 错误 = 无 Pinning；部分失败 = 那些域名有 Pinning
 ```
 
 **关键原则**：不要一上来就脱壳。先用静态把"值不值得脱"判断清楚——
@@ -215,9 +222,10 @@ next: static_analysis | runtime_dump | dynamic_verify | report
 
 ## 七、参考
 
-- `references/pitfalls.md`：完整坑库（按层分类：静态 / 连接 / 内存 / DEX / Hermes / 报告）。
+- `references/pitfalls.md`：完整坑库（按层分类：静态 / 连接 / 内存 / DEX / Hermes / 流量 / 报告）。
 - `references/playbook.md`：5 条端到端剧本（普通包 / 加固包 / RN 包 / 授权定位 / 闪退排查）。
-- `references/case_skland.md`：森空岛完整案例复盘（SecNeo + RN + 默认 debug 证书 + 2552 条哈希）。
+- `references/case_skland.md`：森空岛完整案例复盘（SecNeo + RN + 默认 debug 证书 + 2552 条哈希 + 登录接口抓包）。
+- 抓包细节（证书方案 / 坑库 / 手工兜底命令）在 `android-https-capture` 技能里，本层只做调度。
 
 ## Notes
 

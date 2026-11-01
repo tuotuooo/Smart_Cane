@@ -257,14 +257,78 @@ code_off: valid=52,752  invalid=0
 
 ---
 
-## 5. 没拿到的
+## 5. 抓包：登录链路全明文（第四轮）
+
+设备是 REDMI 25102RKBEC / x86_64 / Android 14 / 真 root 但**无 Magisk**。
+完整方法见 `android-https-capture` 技能，这里只记本案例的结论。
+
+### 5.1 证书：Android 14 无 Magisk 只能走 APEX
+
+`/system` 只读，`mount -o rw,remount /system` 报 `'/system' not in /proc/mounts`
+（注意：**不含 "read-only"**，字符串匹配会误判为可写）。唯一可行的是：
+
+```bash
+cp /apex/com.android.conscrypt/cacerts/* /data/local/tmp/cacerts/   # 必须先复制！
+# c8750f0d.0 = subject_hash_old
+chcon u:object_r:system_security_cacerts_file:s0 /data/local/tmp/cacerts/*
+mount --bind /data/local/tmp/cacerts /apex/com.android.conscrypt/cacerts
+```
+
+**39 个请求全部解密成功，0 个 TLS 错误 → 该 App 没有 SSL Pinning。**
+
+### 5.2 登录接口（全明文，无签名/无加密/无防重放）
+
+```http
+POST https://as.hypergryph.com/general/v1/send_phone_code
+x-devicemodel: 25102RKBEC      x-devicetype: 1
+x-osver: 14                    x-deviceid: 364bf93cb62c2f27caa87d5fb1feef11
+
+{"phone":"19900000001","type":2}
+→ {"msg":"OK","status":0,"type":"A"}
+```
+
+```http
+POST https://as.hypergryph.com/user/auth/v1/token_by_phone_password
+
+{"phone":"testuser2026","password":"Test123456"}     ← 密码明文
+→ {"msg":"登录失败，账号或密码错误","status":100,"type":"C1"}
+```
+
+### 5.3 三个值得记的点
+
+1. **发验证码不校验号码存在性**：`19900000001` 这种必然不存在的号码，
+   服务端照样返回 `status:0`，界面显示"已发送"。
+2. **四个 `x-device*` 头不参与签名**，改一下就能伪装设备；整条链路无 nonce/时间戳，
+   报文可原样重放。
+3. **埋点自曝在模拟器里**：`batch_event` 里写着 `"#simulator":"ldplayer"`、
+   `"#cpu_abi":"x86_64"`，App 知道自己在模拟器里，**登录请求照发**——
+   这是"没有 root/模拟器阻断"的又一条独立证据，和 §3 的结论互相印证。
+
+### 5.4 踩到的坑：挂代理冷启动会黑屏
+
+挂系统代理启动 App 后，`LoginActivity` 窗口在、进程活着，但 `mCurrentFocus=null`、
+`uiautomator` 报 `null root node`、截图 12KB 纯黑；而**桌面截图 855KB 正常**、
+`FLAG_SECURE` 全工程 0 命中、无崩溃日志。
+
+→ 不是反抓包机制，是启动链路阻塞。**先启动 App 到目标页面，再开代理**就完全正常。
+差点误判成"该 App 检测代理"。
+
+### 5.5 顺带发现的敏感面
+
+- `cloudauth-device.aliyuncs.com` 请求里 `AccessKeyId=LTAI5tMRsqNQuoAexzYgn3Kq` **明文**
+- 数美风控 `fp-it.fengkongcloud.com` 走 **HTTP 明文**
+- 四套风控并存：数美 / 阿里云设备指纹 / 极验 / 腾讯 Beacon
+
+---
+
+## 6. 没拿到的
 
 | 目标 | 状态 | 原因 | 需要什么 |
 |------|------|------|---------|
 | Hermes 字节码 | ✓ **静态已得** | 实测是标准未加密 HBC v90（18204 函数 / 23045 字符串） | 用 `hbcdump` / `hermes-dec` 反汇编即可，**不用登录** |
 | 证书期望指纹 | ✗ | 不在 manifest.mf，硬编码在 native/加密代码 | IDA 分析 `libDexHelper` |
 | SecNeo 解密算法 | ✗ | 在 native 层 | IDA / Frida hook |
-| 加速器选路协议 | 部分 | `Lo0/w;->i` 已反汇编，字段含义已解；服务端协议格式未取 | 抓包 |
+| 加速器选路协议 | 部分 | `Lo0/w;->i` 已反汇编，字段含义已解；抓包链路已通但未进加速流程 | 登录后触发 boost 再抓 |
 | App 自身的完整性校验 | 部分 | `manifest.mf` 已解出 2552 条哈希，比对逻辑未定位 | 继续 `dex_tool.py` 追引用 |
 
 **关键认知（第三轮修正）**：DEX 里确实能 `grep` 到 `su` 多路径、`magisk`、`superuser`、
@@ -281,7 +345,7 @@ Sentry、极验、游戏加速器四个第三方 SDK。
 
 ---
 
-## 6. 这个案例沉淀出的规则
+## 7. 这个案例沉淀出的规则
 
 1. **判加固看类数不看体积。**
 2. **先验常量再推理**——魔数写错会让后面所有结论级联出错。
