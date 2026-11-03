@@ -201,6 +201,20 @@ python <A>/scripts/apk_analyze.py analyze sample.apk | grep -A3 "完整性"
 绝大多数人（包括我）第一次会直接用芯片手册下结论——错在混淆了两条完全不同的路径。
 
 ```bash
+# ── 第 0 步：先检索厂商一手资料（最省时间，别跳过）──────────────
+#   逆私有压缩格式 = 不可能（硬件解码器）
+#   逆 RSA 签名      = 不可能（私钥）
+#   但官方 SDK / 打包器 / 默认密钥 常常是公开的
+#   完整方法见 references/vendor_hunting.md
+#
+#   ① 从 APK 拿厂商锚点：so 名 / 包名前缀 / UUID 尾段 ASCII / DWARF 源码路径
+grep -a -o -E '[a-z0-9_]{4,}/[a-z0-9_/]+\.c' lib*_c.so | sort -u | head
+#   ② 搜 "<vendor> ota sdk" → docs.<vendor>.com（顺手抄包仓凭据 + 错误码表）
+#   ③ 搜 "<vendor>-SDK github" → tools/secureboot/（打包器源码 + 默认密钥）
+#   ④ BBS 上的《XX 使用说明》PDF（imgtool 完整参数、flash 布局）
+#
+#   这三处一手来源的价值 > 后面所有逆向步骤之和。
+
 # ── 第 1 步：一秒判技术栈 + 白牌 + 芯片 + OTA 入口 ─────────────
 python <A>/scripts/apk_analyze.py flutter device_app.apk
 
@@ -241,6 +255,10 @@ curl -s -X POST "https://<device-host>/api/ota/dfu/checkUpdate" \
 #   ① 加了密吗（熵、magic、是否有 header 段）
 #   ② 有没有签名段（RSA 公钥、证书链、固定长度尾块）
 #   ③ dfu 模块怎么校验（IDA/Ghidra 定位校验函数，看是比较 CRC 还是 verify）
+#
+#   ⚠ 先走 vendor_hunting：如果厂商用的是公开 SDK + 默认密钥，
+#     这一步直接退化成"读官方 tools/secureboot/ 的源码"，不用逆。
+#     已打通的实例（SiFli）：ble-device-recon/references/sifli_ota.md
 ```
 
 **判定表**：
@@ -251,6 +269,7 @@ curl -s -X POST "https://<device-host>/api/ota/dfu/checkUpdate" \
 | 有通道、包能下、固件内是 `verify_rsa()` | 自制固件刷不进，通道只能用来降级/重放 |
 | 有通道、包能下、固件内只有 CRC/长度校验 | 可刷自制固件，但坏包会变砖 |
 | 有通道、包拿不到（需登录/设备 SN） | 卡在取证，不是卡在技术 |
+| **厂商用公开 SDK + 默认密钥（交叉验证通过）** | **可复用官方工具链生成合法包；设备端是否接受仍须实测**（错误码 9 = 签名被拒） |
 
 **结论必须这么写**（不许写死能/不能）：
 

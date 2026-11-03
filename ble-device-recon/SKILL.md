@@ -1,6 +1,6 @@
 ---
 name: ble-device-recon
-description: 蓝牙设备发现与协议测绘技能。当一个物理设备（智能手表/手环/耳机/车机/智能家居）需要通过蓝牙摸清能力、复现协议、判断控制面与数据面时使用。覆盖 BLE 广播扫描与厂商指纹、GATT 服务/特征全枚举、notify 订阅与探测帧收发、SPP/RFCOMM 串口探测，以及**零 root 抓 HCI 空口日志还原私有传输协议与容器格式**（设备已与手机绑定、PC 没有蓝牙适配器时走这条）。触发词包括：蓝牙、BLE、GATT、SPP、RFCOMM、扫描蓝牙设备、看看这个手表/手环能干什么、设备协议、逆向设备、特征值 UUID、写特征、串口透传、COM 口、配对、广播包、厂商 ID、连不上设备、搜索不到设备、抓蓝牙包、HCI 日志、btsnoop、蓝牙数据包日志、表盘格式、固件传输协议、文件传到了设备上、还原设备收到的文件。注意：本技能作用对象是**物理设备**，不是 APK；分析 APK 请用 apk-analyzer。
+description: 蓝牙设备发现与协议测绘技能。当一个物理设备（智能手表/手环/耳机/车机/智能家居）需要通过蓝牙摸清能力、复现协议、判断控制面与数据面时使用。覆盖 BLE 广播扫描与厂商指纹、GATT 服务/特征全枚举、notify 订阅与探测帧收发、SPP/RFCOMM 串口探测、**零 root 抓 HCI 空口日志还原私有传输协议与容器格式**（设备已与手机绑定、PC 没有蓝牙适配器时走这条），以及**厂商 OTA/DFU 通道识别与刷机可行性分层**（含 SiFli `sifli_sd` 全协议、包格式、验签错误码、只做 Init 的低风险探测）。触发词包括：蓝牙、BLE、GATT、SPP、RFCOMM、扫描蓝牙设备、看看这个手表/手环能干什么、设备协议、逆向设备、特征值 UUID、写特征、串口透传、COM 口、配对、广播包、厂商 ID、连不上设备、搜索不到设备、抓蓝牙包、HCI 日志、btsnoop、蓝牙数据包日志、表盘格式、固件传输协议、文件传到了设备上、还原设备收到的文件、固件升级、OTA、DFU、刷固件、能不能刷自制固件、sifli_sd、升级包。注意：本技能作用对象是**物理设备**，不是 APK；分析 APK 请用 apk-analyzer。
 agent_created: true
 ---
 
@@ -20,12 +20,17 @@ agent_created: true
 | **无线面** | **本技能** | **App（或 PC）↔ 硬件** |
 | 静态 | `apk-analyzer` | APK 里有什么 |
 
-两条独立的取证路线，按处境选：
+三条独立的取证路线，按处境选：
 
 | 路线 | 前提 | 拿到什么 | 成本 |
 |------|------|---------|------|
 | **主动探测**（`recon.py`） | PC 有蓝牙适配器，设备可连 | 能力地图、能否被自己控制 | 低，但只能试 |
 | **空口抓包**（`snoop_parse.py`） | 有 adb，设备已和手机 App 绑定 | **厂商自己的完整正确流量**，私有协议 + 文件格式 | 低，且不需要 root |
+| **厂商文档**（`vendor_hunting`） | 能识别出方案商 | 官方 SDK / 打包工具 / 默认密钥 | **最低，且收益最大** |
+
+> 第三条路线常被跳过：逆私有压缩算法和 RSA 签名是做不到的，
+> 但厂商的 SDK 与工具源码通常是公开的。**先花 20 分钟搜，再决定要不要逆。**
+> 检索方法在 `apk-reverse-master/references/vendor_hunting.md`。
 
 **贯穿全技能的一条原则：先只看不动。**
 `scan` 和 `map` 完全不改变设备状态；`probe` 才发字节，且默认只发无害探针。
@@ -38,7 +43,8 @@ agent_created: true
 - 在 BLE 上发了命令没反应，想知道是不是发错通道了。
 - 想判断设备用的是哪家芯片方案（广播厂商 ID、服务 UUID 里的 ASCII 尾段）。
 - 关心"能不能自己写个程序控制这个设备"，而不是"能不能刷固件"。
-  （刷固件的可行性判定在 `apk-reverse-master` 剧本 F。）
+- 想知道设备有没有**固件升级通道**、升级包长什么样、验签卡在哪一层。
+  （App 侧取证与可行性分层见 `apk-reverse-master` 剧本 F；拿到 UUID 回设备验证用本技能）
 
 ## Quick Start
 
@@ -83,6 +89,18 @@ python <skill>/scripts/snoop_parse.py frames hci.bin --handle 0x200 --dir h2c --
 # 4. 还原：内置 d1 预设直接切出设备收到的文件
 python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o outdir/
 ```
+
+### 第三条路线：先找厂商一手资料（最省时间）
+
+```
+① 从 APK / 设备拿到厂商锚点（so 名、包名前缀、UUID 尾段 ASCII、DWARF 源码路径）
+② 按 docs.<vendor>.com → 官方包仓 → 开源 SDK 仓库 → BBS PDF 的顺序搜
+③ 三条交叉验证：常量相同 / 结构相同 / 命名相同
+```
+
+检索阶梯、镜像加速（`gh-proxy.com`）、AAR 拆解、字节码取常量、坑库，全部在
+`apk-reverse-master/references/vendor_hunting.md`。**遇到私有格式或带签名的升级包，
+先读那份，别直接开逆。**
 
 ## 判据：怎么从输出里读出结论
 
@@ -144,6 +162,25 @@ python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o 
 完整方法论（含"表盘不是图片是程序"的判别、按 MTU 照抄复现参数、未解字段怎么标注）
 见 `references/datapath_reverse.md`。
 
+### 4.5 有没有 OTA 通道：看服务 UUID，不看 App
+
+`map` 输出里如果出现**第二组私有服务**（不是日常用的那个），先按尾段 ASCII 解一下：
+
+```bash
+# UUID 尾段 8+12 位十六进制 → 小端 ASCII
+# 00000000-0000-0000-6473-5F696C666973  ->  b'sifli_sd'
+```
+
+| 观察到 | 结论 |
+|--------|------|
+| 尾段解出 `sifli_sd` | **SiFli 芯片原生 OTA 通道**，协议见 `references/sifli_ota.md` |
+| 有 `...-0100-` / `...-0200-` 成对特征，一个配置一个数据 | 典型的芯片厂串口透传服务（不止 SiFli 用这个套路） |
+| 日常通道的特征数上千包 + 另有独立服务只在上电初期广播 | 后者大概率就是 DFU |
+
+**判"能不能刷自制固件"要分三层，别一步下结论**：App 层（搬运工）→ 传输层（能重放）
+→ **设备端验签（唯一真卡点）**。设备端强度只能靠固件/官方错误码回答，
+不能靠芯片手册推测。efuse 安全启动保护的是**上电启动链**，与 OTA 验签是两套机制。
+
 ## 典型工作流
 
 ```
@@ -155,6 +192,9 @@ python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o 
   │
   ├─ recon map <MAC>       ← GATT 全图：哪些可读、哪些可写、哪些能 notify
   │     └─ 拿到 gatt.json，这就是设备能力地图
+  │     └─ 发现有第二组私有服务（...-0100-/...-0200- 成对）→ 按 4.5 辨 OTA 通道
+  │           └─ 是 OTA → references/sifli_ota.md（或按同构推其他芯片）
+  │                 ⚠ 先只做 Init 探测，无原厂固件备份前不要传 image
   │
   ├─ recon probe <MAC>     ← 先被动听 8 秒，看设备会不会自己推数据
   │     再对可写特征发最小探针（\r\n / help / version / 单字节）
@@ -179,6 +219,10 @@ python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o 
 - `references/sifli_watchface.md`：**SiFli 方案专用**。eZip 图片格式（官方位域 + 厂商扩展块表）、
   官方双向转换工具的命令与坑、`.watch` 容器重打包（原样重打包可逐字节一致）、
   改造流程与未验证项。遇到 SF32LB 手表/开发板的表盘、开机图、动态应用资源，先读这份。
+- `references/sifli_ota.md`：**SiFli OTA 专用**。`sifli_sd` 服务与特征、传输帧（含
+  "长度字段不自洽"的待定项）、设备主导的拉取式状态机、`ctrl_packet` 三段布局、
+  分块镜像格式、密钥体系与"厂商是否换密钥"的判定、**验签错误码 9 是判公钥的钥匙**、
+  风险分层与只做 Init 的最小实验、官方 imgtool/ble_serial 用法。
 - `references/pitfalls.md`：蓝牙专有坑库（模拟器虚拟蓝牙、BLE/SPP 混淆、bleak API 变更、
   Windows COM 口与 GATT 缓存、UUID 字节序等）。
 
@@ -189,8 +233,14 @@ python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o 
   想在模拟器里连真表是不可能的——必须用 PC 的蓝牙适配器。这条踩过，代价是半天。
 - 本技能只做**发现与测绘**，不做：
   - APK 分析 → `apk-analyzer`
-  - 固件能不能刷 → `apk-reverse-master` 剧本 F
+  - 固件"能不能刷"的最终判定 → 本技能只到"通道存在 + 验签在哪一层"，
+    真正下结论要 `apk-reverse-master` 剧本 F + `references/sifli_ota.md`
   - HTTPS 抓包 → `android-https-capture`
+- **厂商一手资料优先于逆向**：私有压缩格式和 RSA 签名逆不出来，
+  但官方 SDK / 打包器 / 默认密钥常常是公开的（见 `vendor_hunting.md`）。
+- **刷机风险**：验签发生在写 flash 之前，所以"只 Init 不传 image"是低风险探测；
+  但 OTA_MANAGER 自身和 ftab/bootloader 一旦刷坏，设备没有恢复通道。
+  没有原厂固件备份时不要进入镜像传输阶段。
 - **空口抓包的结论边界**：你还原的是"App 发了什么"，**不等于"设备接受别人发同样的东西"**。
   设备可能校验来源/会话密钥/版本号。要说"我能自己推表盘上去"，必须真的发一次。
 - **HCI full 模式会持续写盘**（每小时几十 MB），抓完记得回开发者选项关掉，

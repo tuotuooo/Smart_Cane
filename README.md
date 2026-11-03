@@ -18,7 +18,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备，四类对象方法完�
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
-| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** | 蓝牙适配器 或 adb |
+| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别与刷机分层** | 蓝牙适配器 或 adb |
 
 依赖方向是单向的：编排层调用其余五层，五层之间互不依赖。
 
@@ -35,6 +35,23 @@ apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 
 - 从 APK 里读出协议 → `apk-analyzer`；到真设备上验证协议 → `ble-device-recon`。
 - 改包（`apk-analyzer`）是**最后手段**：签名变 → 数据/登录/绑定全丢、官方升级断裂。
   有抓包/脱壳能拿到同样信息时，不要改包。
+
+**第三条路线：厂商一手资料（最省时间，也最容易被跳过）**
+
+私有压缩格式和 RSA 签名是**逆不出来**的（硬件解码器 / 私钥），但厂商的 SDK、
+打包工具、默认密钥通常公开。检索方法沉淀在
+[`apk-reverse-master/references/vendor_hunting.md`](apk-reverse-master/references/vendor_hunting.md)：
+
+```
+APK 里挖厂商锚点（so 名 / 包前缀 / UUID 尾段 ASCII / DWARF 源码路径）
+  → docs.<vendor>.com（顺手抄包仓凭据 + 错误码表）
+  → 官方包仓（maven/pypi，下 AAR 拆 classes.jar 取常量）
+  → 开源 SDK 仓库（tools/secureboot = 打包器源码 + 默认密钥，需 gh-proxy）
+  → BBS 的 PDF（imgtool 完整参数、flash 布局）
+  → 三条交叉验证：常量相同 / 结构相同 / 命名相同
+```
+
+实测：靠这 20 分钟替代了"逆 RSA 签名 + 逆私有压缩"两件做不到的事。
 
 ---
 

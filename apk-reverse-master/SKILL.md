@@ -44,6 +44,9 @@ agent_created: true
   ├─[1d] 若是硬件配套 App（手表/手环/耳机/车机）
   │     → 直接跳 playbook 剧本 F：固件 OTA 与"可刷性"分层判定
   │     目标不是找漏洞，而是**先判 OTA 通道存不存在、卡点在哪一层**
+  │     ⚠ 第 0 步永远是"检索厂商一手资料"（references/vendor_hunting.md）：
+  │        私有压缩格式、RSA 签名、默认密钥都逆不出来，但官方 SDK 通常是公开的。
+  │        这次靠 20 分钟检索替代了"逆 RSA + 逆私有压缩"两件做不到的事。
   │     ⚠ 到了"去真设备上验证 UUID / 发帧"这一步，对象已不是 APK，
   │        换 `ble-device-recon` 技能（设备发现与协议测绘），别在本技能里做
   │
@@ -153,6 +156,10 @@ agent_created: true
 ### 2.6 IoT 设备"能不能刷自制固件"——分三层判，别一步下结论
 
 这是最容易出错的地方。**"芯片有安全启动"不等于"没有升级通道"，两者是不同的事。**
+
+> 做这一节之前先做**第 0 步**：检索厂商一手资料（`references/vendor_hunting.md`）。
+> 如果厂商用的是公开 SDK + 默认密钥，那么"设备端验签"这一层根本不用逆 ——
+> 直接读官方 `tools/secureboot/` 的源码即可。
 
 | 层 | 有什么 | 能不能改 |
 |----|--------|---------|
@@ -285,6 +292,9 @@ next: static_analysis | runtime_dump | dynamic_verify | report
 | 把元素的 `theme` 改掉腾位置 | 若它是唯一属性，装包报 `does not specify android:name` | 只挑 `screenOrientation` 这类冗余属性，name 永不动 |
 | `am start` 报 not exported 就判"功能不存在" | 那是权限问题，不是能力问题 | 改包导出，再用 `mResumedActivity` 验收 |
 | 改包当成第一手段 | 签名变 → 数据/登录/绑定全丢，官方升级断裂 | 先找抓包/脱壳的路，改包最后用 |
+| **上来就逆私有压缩格式 / RSA 签名** | 硬件解码器和私钥都逆不出来，纯浪费 | **先按 `vendor_hunting.md` 搜官方 SDK/工具/密钥，20 分钟的事** |
+| 厂商文档写着要账号就放弃 | 接入文档页常直接印着包仓用户名密码 | 读页面，别只看"需要授权"四个字 |
+| 用二手博客的参数生成升级包 | 版本号/flag 会漂移，设备直接拒收 | 参数以官方手册+源码为准，且与设备当前版本对齐 |
 
 ---
 
@@ -324,6 +334,10 @@ next: static_analysis | runtime_dump | dynamic_verify | report
 ## 七、参考
 
 - `references/pitfalls.md`：完整坑库（按层分类：静态 / 连接 / 内存 / DEX / Hermes / 流量 / IoT固件 / **改包重签** / 报告）。
+- `references/vendor_hunting.md`：**厂商一手资料检索**。从 APK 挖厂商锚点（so 名 / 包前缀 /
+  UUID 尾段 ASCII / DWARF 源码路径）→ 五级检索阶梯（文档站 → 官方包仓 → 开源 SDK 仓库 →
+  BBS PDF → 二手）→ 三条交叉验证（常量/结构/命名相同）→ 镜像加速（`gh-proxy.com`）→
+  坑库。**遇到私有格式、私有 OTA、带签名的升级包，先读这份。**
 - `references/playbook.md`：6 条端到端剧本（普通包 / 加固包 / RN 包 / 授权定位 / 闪退排查 / **IoT 配套 App 判固件可刷性**）。
 - `references/case_skland.md`：森空岛完整案例复盘（SecNeo + RN + 默认 debug 证书 + 2552 条哈希 + 登录接口抓包）。
 - `references/case_watch.md`：悦心S1 智能手表复盘（Flutter + 白牌方案识别 + OTA 通道取证 + 芯片双重确证 + 改包导出未导出 Activity + 空口还原表盘协议）。
