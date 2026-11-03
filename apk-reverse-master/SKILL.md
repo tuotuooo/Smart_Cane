@@ -62,7 +62,7 @@ agent_created: true
   │     4.4 apk-runtime-dump --pkg       落盘
   │     4.5 dex_fix 规范化               验收：code_off invalid=0
   │
-  └─[5] 动态验证（可选，但结论更硬）
+  ├─[5] 动态验证（可选，但结论更硬）
         ├─ 5a logcat / 截屏 / UI dump  —— 确认静态推断的行为真的发生
         └─ 5b 要看真实接口 → android-https-capture ── 需 root 或改包
               5b.1 cap.py info          判该走哪条证书路（这是难点，不是抓包本身）

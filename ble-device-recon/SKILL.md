@@ -176,6 +176,9 @@ python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o 
   开启/取日志/解析两坑（H4 类型看 `data[0]`、ATT 要剥 L2CAP）。
 - `references/datapath_reverse.md`：拿到空口日志之后——定位流、定界帧头、用校验和自证、
   拆私有容器、判"资源还是程序"、照抄参数复现。含"8KB 对齐是错的"这类反例。
+- `references/sifli_watchface.md`：**SiFli 方案专用**。eZip 图片格式（官方位域 + 厂商扩展块表）、
+  官方双向转换工具的命令与坑、`.watch` 容器重打包（原样重打包可逐字节一致）、
+  改造流程与未验证项。遇到 SF32LB 手表/开发板的表盘、开机图、动态应用资源，先读这份。
 - `references/pitfalls.md`：蓝牙专有坑库（模拟器虚拟蓝牙、BLE/SPP 混淆、bleak API 变更、
   Windows COM 口与 GATT 缓存、UUID 字节序等）。
 
