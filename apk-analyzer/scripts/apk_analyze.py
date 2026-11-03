@@ -467,6 +467,7 @@ def inventory(z):
         "total": len(names), "dexes": dexes, "so": so, "total_so": total_so,
         "assets_count": len(assets), "interesting_assets": interesting_assets,
         "meta": meta,
+        "flutter": any(re.search(r"^lib/[^/]+/libapp\.so$", n) for n in names),
     }
 
 
@@ -496,6 +497,7 @@ def cmd_analyze(args):
         "assets_count": inv["assets_count"],
         "interesting_assets": [{"name": n, "size": s} for n, s in inv["interesting_assets"]],
         "meta": [n for n, _ in inv["meta"]],
+        "flutter": inv["flutter"],
     }
     # Manifest
     try:
@@ -587,6 +589,10 @@ def cmd_analyze(args):
             print(f"        {c['type']:9} {c['name']}  exported={c['exported']}{star}")
     else:
         print("     (AXML 解析失败，已回退原始扫描)")
+    if report["inventory"].get("flutter"):
+        print("\n[!] 检测到 Flutter（libapp.so 存在）：业务代码在 Dart AOT snapshot 里，")
+        print("    下面 [4] 的 DEX 线索只有启动壳与桥接，不是业务代码。")
+        print("    请改用: apk_analyze.py flutter <apk>")
     print("\n[4] DEX 线索]")
     for d in report["dex"]:
         print(f"     -- {d['dex']} (串 {d['str_count']} / 类 {d['class_count']})")
@@ -875,6 +881,231 @@ def cmd_bundle(args):
             print("  ", s[:140])
 
 
+# ============================ Flutter 层 ============================
+# Flutter 应用的业务代码全在 lib/<abi>/libapp.so（AOT snapshot），
+# DEX 只剩壳/桥接，所以 dex 子命令几乎是空的 —— 必须单独处理。
+
+CLOUD_VENDORS = [
+    ("VeryFit / IDO", ["idoocloud", "veryfitplus", "veryfit", "switchappkey", "ido_key"]),
+    ("华为运动健康", ["huawei_health", "hilink"]),
+    ("小米生态", ["mi_fitness", "zepp", "huami"]),
+]
+
+# 芯片厂指纹只能证明"SDK 支持这家芯片"，不能证明设备用的就是它。
+# 命中多家 = 通用协议 SDK（protocol_c 一类），必须靠设备端证据二次确认。
+CHIP_VENDORS = [
+    ("SiFli 思澈", ["sifli", "sf32lb", "sftool"]),
+    ("Nordic", ["nordic", "nrf5", "nrfutil", "nrf_dfu"]),
+    ("杰理 JieLi", ["jieli", "jl_bt"]),
+    ("恒玄 BES", ["bestechnic", "bes2700", "bes_"]),
+    ("汇顶 Goodix", ["goodix", "gr551"]),
+    ("瑞昱 Realtek", ["realtek", "rtl87"]),
+    ("Ambiq", ["ambiq", "apollo3"]),
+    ("Telink", ["telink", "tlsr8"]),
+    ("中科蓝讯", ["bluetooth_ab53", "ab532"]),
+]
+
+OTA_HINTS = ["ota", "firmware", "dfu", "upgrade", "sftool", "bootloader", "efuse"]
+
+
+def _dart_strings(buf, min_len=4, max_len=300):
+    out = set()
+    for m in re.finditer(rb"[\x20-\x7e]{%d,}" % min_len, buf):
+        s = m.group()
+        if len(s) > max_len:
+            s = s[:max_len]
+        try:
+            out.add(s.decode("ascii"))
+        except Exception:
+            pass
+    return out
+
+
+def analyze_flutter(z, keyword=None):
+    names = z.namelist()
+    libapp = [n for n in names if re.search(r"^lib/[^/]+/libapp\.so$", n)]
+    libflut = [n for n in names if re.search(r"^lib/[^/]+/libflutter\.so$", n)]
+    res = {
+        "flutter": bool(libapp),
+        "libapp": [{"name": n, "size": z.getinfo(n).file_size} for n in libapp],
+        "libflutter": [{"name": n, "size": z.getinfo(n).file_size} for n in libflut],
+        "dart_version": None,
+        "packages": {},
+        "api_paths": [],
+        "hosts": [],
+        "white_label": [],
+        "ota_hits": [],
+        "note": None,
+    }
+    if not libapp:
+        res["note"] = ("未发现 libapp.so，不是 Flutter AOT 应用。"
+                       "RN 应用请用 bundle 子命令；纯原生应用用 dex 子命令。")
+        return res
+
+    target = max(libapp, key=lambda n: z.getinfo(n).file_size)
+    res["engine_ok"] = bool(libflut)
+    buf = z.read(target)
+    ss = _dart_strings(buf)
+
+    # Dart 版本（AOT snapshot 里会留 engine 版本串）
+    for s in ss:
+        m = re.match(r"^(?:Flutter|Dart VM version)?\s*(\d+\.\d+\.\d+)\s*\(stable\)", s)
+        if m:
+            res["dart_version"] = m.group(1)
+            break
+
+    low = {s: s.lower() for s in ss}
+
+    # Dart 包结构：package:xxx/yyy.dart —— 反推功能模块，比读汇编高效得多
+    pkgs = {}
+    for s in ss:
+        m = re.match(r"^package:([A-Za-z0-9_]+)/([A-Za-z0-9_/]+\.dart)$", s)
+        if m:
+            pkgs.setdefault(m.group(1), set()).add(m.group(2))
+    res["packages"] = {k: {"files": len(v), "sample": sorted(v)[:6]}
+                       for k, v in sorted(pkgs.items(), key=lambda x: -len(x[1]))}
+
+    # 接口路径
+    apis = sorted({s for s in ss if re.match(r"^/?api/", s) and len(s) < 120})
+    res["api_paths"] = apis
+
+    # 主机名
+    hosts = set()
+    for s in ss:
+        for m in re.finditer(r"\b((?:[a-z0-9](?:[a-z0-9-]{0,30})\.)+(?:com|cn|net|io|org|cc|top|xyz))\b", s):
+            h = m.group(1)
+            if not h.startswith(("schemas.", "www.w3.")):
+                hosts.add(h)
+    res["hosts"] = sorted(hosts)
+
+    # 白牌 / 方案商指纹（分两类，含义不同）
+    joined = " ".join(low.keys())
+    for vendor, sigs in CLOUD_VENDORS:
+        hit = [x for x in sigs if x in joined]
+        if hit:
+            res["white_label"].append({"vendor": vendor, "kind": "cloud", "evidence": hit[:4]})
+    chips = []
+    for vendor, sigs in CHIP_VENDORS:
+        hit = [x for x in sigs if x in joined]
+        if hit:
+            chips.append({"vendor": vendor, "kind": "chip", "evidence": hit[:4]})
+    res["white_label"].extend(chips)
+    res["chip_vendor_count"] = len(chips)
+
+    # OTA / 固件线索
+    if keyword:
+        kws = [k.lower() for k in keyword]
+    else:
+        kws = OTA_HINTS
+    tz = re.compile(r"^(Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|"
+                    r"Europe|Indian|Pacific|Etc|US|Canada)/")
+    hits = {s for s in ss
+            if _kw_hit(s, kws)
+            and "rotate" not in s.lower() and "total" not in s.lower()
+            and not tz.match(s)
+            and not s.startswith(("<", "&"))
+            and _looks_like_code(s)}
+    # 无空格的（标识符/路径）排前面，含空格的（日志/文案）排后面
+    res["ota_hits"] = sorted(hits, key=lambda s: (" " in s, s))[:120]
+
+    res["note"] = ("libapp.so 里的字符串是按 Dart snapshot 布局**连续存储**的，"
+                   "按可打印区间切分可能把相邻串粘成一条。关键结论（域名/接口）"
+                   "请在原始字节里 count() 二次确认——这与 Hermes 的 1.5c 坑同源。")
+    return res
+
+
+OTA_RE = re.compile(r"OTA|Ota|(?<![A-Za-z])ota(?![A-Za-z])")
+
+
+def _kw_hit(s, kws):
+    """关键词命中判断。
+    'ota' 必须按词/驼峰匹配——Annotation、Bogota、microtask、rotation 都含 'ota' 子串。"""
+    ls = s.lower()
+    for k in kws:
+        if k == "ota":
+            if OTA_RE.search(s):
+                return True
+        elif k in ls:
+            return True
+    return False
+
+
+def _looks_like_code(s):
+    """区分 '代码/标识符' 与 '自然语言文案'。
+    多语言文案里大量含 ota（芬兰语 ota = 拿、葡语 nota 等），不过滤会把噪音当线索。"""
+    if " " not in s:
+        return True
+    if ". " in s or '"' in s or "'" in s:
+        return False
+    if s.count(", ") > 1:
+        return False
+    if not re.search(r"(OTA|Ota|Firmware|DFU|Upgrade|Sifli)", s):
+        return False
+    return len(s) < 100
+
+
+def cmd_flutter(args):
+    z = open_apk(args.apk)
+    res = analyze_flutter(z, args.keyword)
+    if args.json:
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return
+    if not res["flutter"]:
+        print("[!] " + res["note"])
+        sys.exit(2)
+    print("=== Flutter 应用 ===")
+    for a in res["libapp"]:
+        print("  libapp.so: %-34s %8.1f MB" % (a["name"], a["size"] / 1e6))
+    print("  引擎 libflutter.so:", "有" if res.get("engine_ok") else "无(可疑)")
+    if res["dart_version"]:
+        print("  Dart/Flutter 版本:", res["dart_version"])
+
+    cloud = [w for w in res["white_label"] if w["kind"] == "cloud"]
+    chips = [w for w in res["white_label"] if w["kind"] == "chip"]
+    print("\n[云平台/方案]")
+    if cloud:
+        for w in cloud:
+            print("  %-16s <- %s" % (w["vendor"], ", ".join(w["evidence"])))
+        print("  → 白牌方案：一套 App 套多个品牌，同方案设备/固件/工具链大概率可复用")
+    else:
+        print("  未命中已知白牌云平台（可能是自研或私有云）")
+
+    if chips:
+        print("\n[芯片厂指纹] 命中 %d 家" % len(chips))
+        for w in chips:
+            print("  %-16s <- %s" % (w["vendor"], ", ".join(w["evidence"])))
+        if len(chips) >= 3:
+            print("  ! 命中 >=3 家说明这是**通用协议 SDK**（如 protocol_c），")
+            print("    只能证明它支持这些芯片，不能证明设备用的是哪家。")
+            print("    判定实际芯片必须靠设备端证据：GATT UUID / 固件内串 / 拆机丝印。")
+
+    print("\n[Dart 包结构] 前 15 个（按文件数）")
+    for i, (k, v) in enumerate(res["packages"].items()):
+        if i >= 15:
+            break
+        print("  %-32s %3d 文件  例: %s" % (k, v["files"], v["sample"][0] if v["sample"] else ""))
+
+    if res["api_paths"]:
+        print("\n[接口路径] %d 条" % len(res["api_paths"]))
+        for s in res["api_paths"][:40]:
+            print("  ", s)
+    else:
+        print("\n[接口路径] 未发现 api/ 前缀（可能在宿主 DEX 或动态拼接）")
+
+    if res["hosts"]:
+        print("\n[域名] %d 个" % len(res["hosts"]))
+        for h in res["hosts"][:40]:
+            print("  ", h)
+
+    if res["ota_hits"]:
+        print("\n[OTA/固件线索] %d 条（前 40）" % len(res["ota_hits"]))
+        for s in res["ota_hits"][:40]:
+            print("  ", s[:130])
+
+    if res.get("note"):
+        print("\n[注意] " + res["note"])
+
+
 # ============================ 入口 ============================
 
 def main():
@@ -914,6 +1145,13 @@ def main():
     pb.add_argument("apk")
     pb.add_argument("--json", action="store_true")
     pb.set_defaults(func=cmd_bundle)
+
+    pf = sub.add_parser("flutter", help="Flutter 应用：libapp.so 字符串/Dart 包结构/接口/白牌指纹")
+    pf.add_argument("apk")
+    pf.add_argument("--json", action="store_true")
+    pf.add_argument("--keyword", action="append",
+                    help="只保留含这些关键词的字符串(可重复)，默认 OTA/固件关键词")
+    pf.set_defaults(func=cmd_flutter)
 
     args = p.parse_args()
     args.func(args)

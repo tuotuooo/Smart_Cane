@@ -261,6 +261,40 @@ glob.glob("**/classes*.dex", recursive=True)
 
 ---
 
+### 2.7 并发跑 adb 命令，连接突然断掉
+
+**现象**：两条命令（比如"连接模拟器"和"截图"）同时发出去，第二条报
+`device offline` / `adb server version doesn't match`，甚至整个 adb server 被重启。
+
+**原因**：adb 是**单 server 多客户端**。两条命令同时触发"重启 server"
+（版本不一致 / 端口冲突时）会互相把对方的连接踢掉。
+
+**正确做法**：连接类命令与操作类命令**合并进同一条 shell 调用**（`&&` 串联），
+不要在同一时刻并行发多条 adb。批量操作前先 `adb devices` 确认在线，
+再一次性下发。真需要并行时，用同一个 server、不同 `-s <serial>`，且不要带
+`kill-server` / `start-server`。
+
+---
+
+### 2.8 Git Bash 把设备端路径改写成 Windows 路径
+
+**现象**：`adb shell uiautomator dump /sdcard/ui.xml` 报
+`UI hierchary dumped to: C:/Program Files/Git/sdcard/ui.xml`，设备上找不到文件。
+
+**原因**：MSYS2/Git Bash 的路径自动转换把 `/sdcard/...` 当成本机绝对路径。
+
+**正确做法**：
+
+```bash
+export MSYS_NO_PATHCONV=1        # 整个会话关闭转换
+# 或临时：MSYS_NO_PATHCONV=1 adb shell ...
+# 或绕开：adb exec-out uiautomator dump /dev/tty > ui.xml
+```
+
+同理影响 `adb shell "echo x > /data/local/tmp/f"` 这类带重定向的命令。
+
+---
+
 ## 三、内存脱壳层
 
 ### 3.1 读 `/proc/pid/mem` 全是空
@@ -528,3 +562,314 @@ bundle 自然不在内存里。
 - 需要什么条件才能拿到（如"root + IDA 分析 libDexHelper"）
 
 这一节是报告可信度的来源。**没有边界的报告等于没有结论。**
+
+---
+
+## 八、IoT / 固件层
+
+### 8.1 用"芯片有安全启动"直接判"固件刷不了"
+
+**现象**：查到芯片型号（SiFli / Nordic / BES…），看到厂商文档写"支持 Secure Boot、
+efuse rootkey、RSA 签名"，于是断言"自编译固件刷不进去"，写进报告收工。
+
+**原因**：**把两条不同的路径当成了一条**。
+
+```
+路径 A  上电启动：  bootloader ──[efuse rootkey 验 app 镜像]──> 运行
+路径 B  固件升级：  App ──SPP/BLE──> 固件内 dfu 模块 ──[??? 验签]──> 写 flash
+```
+
+efuse 保护的是**路径 A**。路径 B 的校验实现**在固件里自己写**——它可能复用同一套
+RSA 公钥（那就真封死），也可能只是 CRC + 魔数（低端方案很常见，那就完全开放）。
+**从芯片手册推不出路径 B 的实现。**
+
+**正确做法**：
+1. 先证路径 B 存在（有没有 OTA 接口、传输函数、OTA 状态机）；
+2. 再证包能拿到（`otaFileUrl`）；
+3. 最后**解固件本体**看 dfu 校验函数。到这一步才有资格说"能/不能"。
+
+`[案例]` 悦心S1：首轮据 SiFli 通用方案判"efuse 封死、刷机不现实"，第二轮在 App 里
+发现完整的 `device_ota` 模块 + `api/ota/dfu/checkUpdate` + `sendZipToFirmware`，
+结论必须降级为"通道存在，验签强度待固件验证"。
+
+---
+
+### 8.2 把 Flutter 的 DEX 类数当代码量
+
+**现象**：153MB 的 APK，`classes.dex` 只有几百个类，判断"这 App 没什么东西/被加固了"。
+
+**原因**：Flutter 应用的业务代码编译进 `lib/<abi>/libapp.so`（Dart AOT snapshot），
+DEX 里只剩启动壳和 MethodChannel 桥接。用 DEX 类数衡量代码量在 Flutter 上**完全失效**。
+
+**正确做法**：`analyze` 里看到 `libapp.so` 就直接走 `flutter` 子命令。
+Dart 字符串是**明文**存在 snapshot 里的，`package:xxx/yyy.dart` 还能直接反推模块结构，
+比读汇编快一个数量级。
+
+`[案例]` 悦心S1：44MB 的 `libapp.so` 里直接读出 `device_ota` / `device_dial` /
+`protocol_lib` 三大模块和 125 条接口路径，全程没碰反汇编。
+
+---
+
+### 8.3 把白牌方案当"该品牌自研"分析
+
+**现象**：接的是 A 品牌手表，于是按"A 公司自研协议"去啃，每个字段都从零猜。
+
+**原因**：大量消费级硬件是**白牌方案**——同一套 App 换皮肤卖给几十个品牌。
+判据：命中 `idoocloud` / `veryfitplus` / `switchAppKey`（VeryFit/IDO）、
+`zepp` / `huami`（小米生态）、`huawei_health` / `hilink` 等。
+
+**为什么重要**：白牌意味着固件格式、协议栈、工具链**全网通用**。按"通用方案"找，
+别人的研究、同方案的固件包、厂商的 PC 工具都能直接复用；按"自研"找，等于把
+已经有人做完的事重做一遍。
+
+`[案例]` 悦心S1：App 里全是 `*.idoocloud.com`，还有 `switchAppKey` 切换界面 →
+实为 VeryFit(IDO) 白牌，ASUS 只是贴牌方。
+
+---
+
+### 8.4 凭 App 里命中某芯片厂就断定设备芯片
+
+**现象**：`libapp.so` 里搜到 `sifli`，于是判"芯片是 SiFli"，写进结论。
+
+**原因**：配对 App 通常内置**通用协议 SDK**（`protocol_c` 一类），一个库同时支持
+SiFli / Nordic / Realtek / Ambiq / Telink 多家。命中某家只证明"SDK 支持它"。
+
+**正确做法**：**双重证据**才定芯片。
+1. 设备端证据：GATT 服务 UUID 尾段、广播 manufacturer data、固件内厂商串、拆机丝印；
+2. App 端佐证：SDK 里该芯片的专用代码路径（有专属 `xxx_dial_make.c` 这类源文件名更好）。
+
+`[案例]` 悦心S1 的判定链：App 里 `[芯片厂指纹] 命中 5 家`（不可用）→
+设备 GATT UUID `00000000-0000-0000-6473-5f696c666973` 小端解出 `sifli_sd`（硬证据）→
+`libprotocol_c.so` 内有 `watch_dial/sifli_dial/app_custom_dial_make.c` 源码路径（佐证）
+→ 才敢下"确证 SiFli"。
+
+---
+
+### 8.5 `ota` 子串误命中，造出一堆假线索
+
+**现象**：按 `ota` 过滤字符串，得到 `Annotation`、`Bogota`、`microtask`、`rotation`、
+`AnnotatedRegion` 等一堆结果，还以为发现了 OTA 逻辑。
+
+**原因**：`ota` 是极常见的子串。`Annotation`（n-**ota**-tion）、`Bogota`（Bog-**ota**）、
+`microtask`（micr-**ota**-sk）、`rotation`（r-**ota**-tion）全都中招。
+
+**正确做法**：按**词边界或驼峰**匹配：
+
+```python
+OTA_RE = re.compile(r"OTA|Ota|(?<![A-Za-z])ota(?![A-Za-z])")
+```
+
+这样 `isOtaIng`、`SifliOtaFinished`、`otaFaceName` 命中，而上面那四个不命中。
+另外多语言文案里 `ota` 也是常用词（芬兰语 "ota" = 拿），含空格的长句要单独过滤。
+
+---
+
+### 8.6 把表盘/资源包当成固件
+
+**现象**：看到 `.zip` + 版本号 + 通过 OTA 接口下发，就认定这是固件包，结果解出来
+一堆 PNG。
+
+**原因**：表盘、字库、语言包、AGPS 数据往往和固件**共用同一条传输通道**和同一批接口
+（`sendZipToFirmware` 就是既发表盘也发固件的通用函数）。区别在内容格式，不在传输。
+
+**这反而是好事**：表盘包**不需要固件签名**（设备只解析格式），所以它是**验证链路
+成本最低的探针**——成功了说明 SPP 传输、分包、握手全通；失败了最多表盘不显示。
+
+**正确做法**：先做表盘验证链路，再谈固件。顺序反了会把"链路不通"误判成"验签拦了"。
+
+---
+
+### 8.7 改数据库伪绑设备，但 UI 入口不出现（依赖"实连"的入口）
+
+**现象**：往 `DeviceCurrent` 表插入完整行（`isConnect=1`、`otaVersion='1.01.03'`、
+`fwVersion*` 齐备），App 首页**设备卡片正常出现**，但点进去**没有"固件更新"入口**。
+于是怀疑字段名写错、字段值不对，反复调 db —— 全是白工。
+
+**实测结论（悦心S1 / AsusExercise）**：**没有真实蓝牙连接就不会出现固件更新入口**，
+这是设计行为，不是注入姿势问题。
+
+**代码依据**（Dart AOT 字符串表可直接读到，无需反汇编）：
+
+```
+package:device_ota/utils/ota_workflow.dart     ← 升级工作流，内含 _checkDeviceState@2184515255
+package:device_ota/utils/ota_check.dart
+package:device_ota/controller/ota_main/network.dart   ← checkUpdate 请求
+断言文案：OTA: deviceInfo == null || otaVersion.isEmpty
+```
+
+即入口的前置条件是 **`deviceInfo != null` 且 `otaVersion` 非空**，而 `deviceInfo` 来自
+`protocol_lib/src/device_info/` —— 连接建立后从设备**实时读取**的运行时对象，
+**不读 `DeviceCurrent` 表**。db 只用于首页列表渲染，两套数据源。
+
+**判据（通用）**：判断某个 UI 入口读 db 还是读实时态，看 Flutter 包的 `package:` 路径：
+
+| 证据 | 含义 |
+|------|------|
+| 页面 controller 直接调 `xxx_dao.dart` | db 可信，注入有效 |
+| 存在 `_checkXxxState` / `_checkUpdatePreconditions` 且牵扯 `deviceInfo` | **实时态**，db 注入无效 |
+| 文案里带 `deviceInfo == null` 这类断言 | 同上，断言就是前置条件说明书 |
+
+**正确做法**：
+1. 别在 db 字段上纠缠。调一轮不生效就判定为"依赖实连"，立刻换路线。
+2. 依赖实连的入口只有两条路：**真机实连**（最省事），或**伪造一个完整 GATT/SPP 外设**
+   （成本极高，一般不值）。
+3. 想要的是**固件本体或协议**而非 UI 时，绕开入口：固件由 App 下载后经
+   `flutter_bluetooth/channel/firmware_data_channel.dart`（对应原生
+   `IDOProtocolAPIExtRegisterCallback|_registerDataTranProgressCallbackReg`）走蓝牙下发，
+   因此 **HCI snoop log 能同时拿到固件字节流与完整传输协议**，且 `adb bugreport`
+   可取回、**不需要 root**。这比攻破 UI 前置条件划算得多。
+
+**附带的落库线索**：`checkUpdate` 的响应会写入 `SportIconBean` 表
+（`deviceModelId / deviceId / version / remark / appFileUrl / otaFileUrl`），
+即真机只需 checkUpdate 一次，`otaFileUrl`（固件直链）就已落盘，但该 db 在
+`/data/data/<pkg>/databases/`，读取需 root。
+
+---
+
+## 九、改包与重签层
+
+> 这一层的共同特征：**改完能装上、能启动、但行为不对**，而且日志里没有任何线索。
+> 操作配方在 `apk-analyzer/references/axml_patch.md`，这里只记"哪儿会翻车"。
+
+### 9.1 给 AXML 插入新属性，装上了但完全没效果
+
+**现象**：想给一个 `exported=false` 的 Activity 加 `android:exported="true"`。
+插入了属性记录、更新了 `attributeCount` 和 chunk size、重建了字符串池、
+把 ResourceMap 扩到与字符串池等长 —— 装包正常，`dumpsys package` 里仍然是 `exported=false`。
+`am start` 继续报 `not exported from uid`。
+
+**做了什么对照实验**：
+
+| 实验 | 结果 |
+|------|------|
+| 改已有 `allowBackup` 的 data（真→假） | ✅ `ALLOW_BACKUP` 标志确实消失 |
+| 插入 `exported`（完整重建池 + 扩 map） | ❌ 无效 |
+| 插入 `exported`（最小改动，复用已有索引） | ❌ 无效 |
+| 插入的 20 字节与 MainActivity 的 `exported` **逐字节一致** | ❌ 无效 |
+
+**结论**：**Android 只认原本就在 `attrExt` 里的属性记录，追加的一律忽略。**
+这不是格式写错 —— 是解析路径根本不读追加项。所以"把字节拼对"这条路是死的。
+
+**正确做法（牺牲法）**：找该元素上一个**存在但无用**的属性，把它改造成 `exported`：
+改 `name` 索引 + `rawValue=0xFFFFFFFF` + `type=0x12` + `data=0xFFFFFFFF`。
+首选牺牲 `screenOrientation`（丢了只是这页能旋转），其次 `configChanges`、`launchMode`。
+`theme` 绝对不能动（见 9.2）。
+
+**判别口诀**：**改值生效，插入无效，扩 map 无用。**
+
+---
+
+### 9.2 把元素唯一属性改掉 → `does not specify android:name`
+
+**现象**：
+
+```
+INSTALL_PARSE_FAILED_MANIFEST_MALFORMED: <activity> does not specify android:name
+```
+
+**原因**：批量处理时"每个 Activity 都挑第一个属性改造成 exported"，
+而某些 Activity 只有 `android:theme` 一个属性，被改掉后连 `name` 都没了。
+
+**正确做法**：
+1. 改之前先 dump 该元素的属性清单，确认它有**至少两个**属性；
+2. **`android:name` 永远不动**；
+3. 宁可跳过这个组件，也不要为了覆盖率把它改坏。
+
+---
+
+### 9.3 把 ResourceMap 扩到与字符串池等长
+
+**现象**：原始 manifest 的 resource map 只有 54 项，字符串池有几百条，怀疑"不全"，
+于是补齐到等长。装机无报错，**行为零变化**。
+
+**原因**：resource map 只是给 `attrExt` 里已有的属性记录查资源 ID 用的，
+不是"字符串 → 资源 ID"的全量映射。它对新增属性没有任何帮助。
+
+**正确做法**：**不要动它。** 扩它没有收益，只会让文件结构更难解释、
+更容易在后续对比中引入噪声。
+
+---
+
+### 9.4 `am start` 被拒，误判成"没有入口"
+
+**现象**：从 DEX/Flutter 包里挖到一个关键 Activity（比如相册网格、视频编辑页），
+`am start -n pkg/.XxxActivity` 报：
+
+```
+java.lang.SecurityException: Permission Denial: starting Intent { ... }
+from null (pid=..., uid=2000) not exported from uid 10190
+```
+
+于是判断"这个功能调不起来，放弃"。
+
+**这是判据错误**：报错说的是**你没权限调它**，不是**它不能跑**。
+App 自己用显式 Intent 启动它毫无问题。
+
+**正确做法**：先分清三件事：
+
+| 情况 | 判据 | 出路 |
+|------|------|------|
+| 组件存在、只是没导出 | manifest 里有，`exported=false` | 改包（9.1 牺牲法） |
+| 组件存在、但产品流程里从不调用 | DEX 里引用它的地方为 0 / 依赖的类被 R8 裁掉 | **改包也没用**，这条路是死胡同 |
+| 组件不存在 | manifest 里搜不到 | 换思路 |
+
+第二种的典型特征：类还在 manifest 里，但 `ClassNotFoundException` 在启动瞬间抛出，
+因为 R8 把它的依赖（第三方库类）裁掉了 —— 说明**产品层从来没走过这条路径**。
+这时改包能把它"叫起来"，但它跑不完。
+
+---
+
+### 9.5 指望深链 / adb 广播 / `route` 参数直达内部页面
+
+**现象**：想让 App 直接打开某个内部页面，试了 `am start -a VIEW -d "appscheme://..."`、
+`am broadcast`、甚至猜 `--es route xxx`，全部无反应或落到首页。
+
+**原因**：路由不是这么实现的。实测在 Flutter 包里搜 `uni_links` / `app_links` /
+`getInitialLink` / `getInitialRoute` —— **0 命中**，说明根本没有外部深链接收入口。
+
+**正确做法**：**先证明入口存在，再想怎么进**。
+
+```bash
+# 1. manifest 里有没有 scheme / 有没有 receiver 接外部广播
+python <skill>/scripts/apk_analyze.py manifest app.apk
+# 2. Flutter 包里有没有深链库（0 命中就别试了）
+python <skill>/scripts/apk_analyze.py flutter app.apk --keyword link
+```
+
+两条都空 → 只剩改包一条路，且改完要接受 9.6 的代价。
+
+---
+
+### 9.6 重签后直接 `adb install`，以及它的真实代价
+
+**现象**：`INSTALL_FAILED_UPDATE_INCOMPATIBLE`（签名冲突），或装上了但 App 数据全空、
+设备要重新绑定、登录态丢失、官方增量更新从此装不上。
+
+**原因**：签名变了就是"另一个 App"。同包名只能覆盖安装同签名的包。
+
+**正确做法与代价清单**（动手前先接受）：
+
+| 代价 | 说明 |
+|------|------|
+| 必须先 `adb uninstall` | App 数据、登录态、本地配置全清 |
+| 蓝牙绑定丢失 | 设备侧不用重置，但 App 里要重新配对 |
+| 官方升级通道断掉 | 之后想升级只能卸载再装官方包 |
+| 部分 SDK 拒服 | 极验/支付/推送在签名不符时可能静默降级 |
+| 反篡改可能杀进程 | 有 `manifest.mf` 逐文件哈希的样本，改一个字节就跑不起来 |
+
+**所以先问一句**："有没有不改包就能拿到同样信息的办法？"
+通常都有 —— 抓 HCI（`ble-device-recon` 附录 A）、抓 HTTPS（`android-https-capture`）、
+脱壳（`apk-runtime-dump`）。**改包应该是最后手段，不是第一手段。**
+
+---
+
+### 9.7 改包成功后的"观察陷阱"
+
+改包只是让页面能起来，**看不到内容还有别的原因**，别急着怀疑改坏了：
+
+| 现象 | 真因 | 处理 |
+|------|------|------|
+| 相册/文件页一片空白 | App **没申请**媒体权限（manifest 里就没有），不是改包导致 | `adb shell pm grant <pkg> android.permission.READ_MEDIA_IMAGES` 等，再重启 App |
+| 点某张图立刻崩 | 依赖类被 R8 裁掉（`ClassNotFoundException: xxx.PhotoView`） | 该路径产品层从未使用，放弃 |
+| 按估算坐标点击总是点空 | 屏幕分辨率/导航栏高度没算对 | 截图 → 裁剪放大 → 用像素定位，别用比例猜 |
+| 页面起来了但立刻返回 | 内部有前置校验（登录/绑定/设备在线） | 这是业务前置条件，不是改包问题 |

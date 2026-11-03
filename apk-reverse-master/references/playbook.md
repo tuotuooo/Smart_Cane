@@ -1,6 +1,6 @@
 # 端到端剧本
 
-五条常见链路，每条给出**完整命令序列**与**每步验收**。照抄改包名即可。
+六条常见链路，每条给出**完整命令序列**与**每步验收**。照抄改包名即可。
 
 约定：
 - `<A>` = `apk-analyzer` 技能目录
@@ -189,6 +189,83 @@ python <A>/scripts/apk_analyze.py analyze sample.apk | grep -A3 "完整性"
 | 存活 1~3 秒后 DEAD | 定时检测（root/emulator） |
 | 停在启动页不前进 | 网络/校验失败，不是崩溃 |
 | 进到登录页就 DEAD | 反 root 在登录时触发 → 抢窗口 dump（剧本 B 第 5 步前置） |
+
+---
+
+## 剧本 F：IoT 硬件配套 App —— 判固件能不能刷
+
+**适用**：手表 / 手环 / 耳机 / 车机 / 智能家居的配套 App。用户真正想要的是
+"这设备的固件我能不能换成自己的"。
+
+**必须先纠正一个前提**：这类问题**不是**"找漏洞"，而是"**找到 OTA 通道，再判断卡在哪一层**"。
+绝大多数人（包括我）第一次会直接用芯片手册下结论——错在混淆了两条完全不同的路径。
+
+```bash
+# ── 第 1 步：一秒判技术栈 + 白牌 + 芯片 + OTA 入口 ─────────────
+python <A>/scripts/apk_analyze.py flutter device_app.apk
+
+# 不是 Flutter 就走这两条
+python <A>/scripts/apk_analyze.py dex    device_app.apk --keyword ota
+python <A>/scripts/apk_analyze.py strings device_app.apk --keyword firmware --out fw.txt
+```
+
+**看什么**：
+- `[云平台/方案]` → 白牌？（`idoocloud` / `veryfitplus` / `switchappkey`）
+- `[芯片厂指纹]` → 命中多家就是通用 SDK，**不能**据此定芯片
+- `[Dart 包结构]` → 有 `device_ota` / `protocol_lib` / `device_dial` 就定位到了
+- `[接口路径]` → `api/ota/*` 是升级入口
+- `[OTA/固件线索]` → `sendZipToFirmware` / `IDOBluetoothDfuConfig` / `otaWorkMode`
+
+```bash
+# ── 第 2 步：捞出完整 OTA 证据链（四条都要有，缺一条就是没打通）──
+grep -a -o -E '(api/ota/[a-zA-Z/]+)' libapp.so | sort -u      # ① 服务端接口
+grep -a -o -E '[A-Za-z]*[Ss]endZip[A-Za-z]*' libapp.so        # ② 传输函数
+grep -a -o -E '[A-Za-z]*(Dfu|OTA|Ota)[A-Za-z]*' libapp.so     # ③ 状态机/回调
+grep -a -o -E 'package:device_ota/[a-z_/]+\.dart' libapp.so   # ④ 模块路径
+```
+
+**四条齐了 = OTA 通道确实存在**。这时才可以谈"能不能换成自己的固件"。
+
+```bash
+# ── 第 3 步：拿固件包 ────────────────────────────────────────
+curl -s -X POST "https://<device-host>/api/ota/dfu/checkUpdate" \
+     -H 'Content-Type: application/json' -H 'appKey: <从抓包拿>' -d '{}'
+```
+
+多数返回 `{"status":...,"message":"appKey不存在"}`。appKey 在请求头里，
+**只能从运行时抓**（`android-https-capture`）。拿到后 `otaFileUrl` 就是固件包地址。
+
+```bash
+# ── 第 4 步：判验签（只有这一步能下结论，且必须靠固件本体）──────
+#   固件包拿到手后看三件事：
+#   ① 加了密吗（熵、magic、是否有 header 段）
+#   ② 有没有签名段（RSA 公钥、证书链、固定长度尾块）
+#   ③ dfu 模块怎么校验（IDA/Ghidra 定位校验函数，看是比较 CRC 还是 verify）
+```
+
+**判定表**：
+
+| 观察到 | 结论 |
+|--------|------|
+| 无 `api/ota/*` 且无 `sendZip*` | 无 OTA 通道，只能拆机（UART/SWD + bootloader） |
+| 有通道、包能下、固件内是 `verify_rsa()` | 自制固件刷不进，通道只能用来降级/重放 |
+| 有通道、包能下、固件内只有 CRC/长度校验 | 可刷自制固件，但坏包会变砖 |
+| 有通道、包拿不到（需登录/设备 SN） | 卡在取证，不是卡在技术 |
+
+**结论必须这么写**（不许写死能/不能）：
+
+> OTA 通道存在（证据：`api/ota/dfu/checkUpdate` + `sendZipToFirmware` + `device_ota` 模块）。
+> 设备端验签强度**未验证**——需取得官方固件包后分析 dfu 模块。
+> 在此之前，"能刷/不能刷"都属于推测。
+
+**三个高频坑**（详见 pitfalls §8）：
+
+1. **efuse ≠ OTA**：efuse rootkey 保护 bootloader 验 app 镜像；OTA 走固件内 dfu 模块。
+   两者可能复用同一套公钥，也可能完全无关——**只有固件能回答**。
+2. **芯片厂指纹命中多家**：通用协议 SDK 支持 SiFli/Nordic/Realtek/Ambiq/Telink 是常态。
+   定芯片必须靠设备端（GATT UUID 尾段 / 固件内串 / 拆机丝印）。
+3. **表盘和固件走同一条 zip 通道**：所以"先做个表盘试试"是验证链路成本最低的方式，
+   失败了也不影响设备。优先做这个，别一上来就动固件。
 
 ---
 
