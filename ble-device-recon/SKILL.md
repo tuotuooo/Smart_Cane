@@ -88,6 +88,10 @@ python <skill>/scripts/snoop_parse.py frames hci.bin --handle 0x200 --dir h2c --
 
 # 4. 还原：内置 d1 预设直接切出设备收到的文件
 python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o outdir/
+
+# 5. 若是固件 OTA：按片号重组出完整镜像（自动校验向量表）
+python <skill>/scripts/snoop_ota.py hci.bin --handle 0x200 --dir h2c -o fw.bin
+#    前面打印的"片号 0x01/02/03"计数与"消息长度分布"就是协议结构本身
 ```
 
 ### 第三条路线：先找厂商一手资料（最省时间）
@@ -219,10 +223,10 @@ python <skill>/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o 
 - `references/sifli_watchface.md`：**SiFli 方案专用**。eZip 图片格式（官方位域 + 厂商扩展块表）、
   官方双向转换工具的命令与坑、`.watch` 容器重打包（原样重打包可逐字节一致）、
   改造流程与未验证项。遇到 SF32LB 手表/开发板的表盘、开机图、动态应用资源，先读这份。
-- `references/sifli_ota.md`：**SiFli OTA 专用**。`sifli_sd` 服务与特征、传输帧（含
-  "长度字段不自洽"的待定项）、设备主导的拉取式状态机、`ctrl_packet` 三段布局、
-  分块镜像格式、密钥体系与"厂商是否换密钥"的判定、**验签错误码 9 是判公钥的钥匙**、
-  风险分层与只做 Init 的最小实验、官方 imgtool/ble_serial 用法。
+- `references/sifli_ota.md`：**SiFli OTA 专用**（含 2026-11-04 真机抓包实测）。`sifli_sd` 服务与特征、
+  传输帧（`01 | 片号 | 总长LE16`，240+240+74=554）、**实际走 V2 而非 V3**、设备主导的拉取式状态机、
+  `ctrl_packet` 三段布局（V3，未在实测中出现）、分块镜像格式、密钥体系、
+  **验签错误码 9 是判公钥的钥匙**、风险分层与只做 Init 的最小实验、官方 imgtool/ble_serial 用法。
 - `references/pitfalls.md`：蓝牙专有坑库（模拟器虚拟蓝牙、BLE/SPP 混淆、bleak API 变更、
   Windows COM 口与 GATT 缓存、UUID 字节序等）。
 

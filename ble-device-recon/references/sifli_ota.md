@@ -258,11 +258,111 @@ python ble_serial.py            # 只连 SIFLI-BLE-DEV 名字，实际设备要�
 
 | 项 | 状态 |
 |----|------|
-| 设备端公钥是否默认 `sig_pub` | ❓ 需 §七 最小实验 |
+| 设备端公钥是否默认 `sig_pub` | ❓ 需 §七 最小实验，或逆固件静态确认 |
 | efuse 安全启动是否已烧 | ❓ 影响"刷进去能否启动"，与"能否过 OTA 验签"是**两件事** |
 | 设备当前 sdk_ver / fw_ver 实际值 | ❓ 可从 msg `0x01` 读，或从 `0x15` 能力位图推 |
 | 自编固件的 flash 布局是否匹配 | ❓ 需原厂 ftab 对照 |
-| §二 长度字段的确切规则 | ❓ 两份实现不自洽，见 2.3 |
+| §二 长度字段的确切规则 | ✅ 已由 §十 实测澄清（`01 | 片号 | 总长LE16`） |
 
 > ⚠️ 早期结论"efuse 安全启动 ⇒ 刷固件封死"**已作废**：
 > efuse 保护的是**上电启动链**，OTA 包验签是**另一套机制**。两者独立，不能互推。
+
+---
+
+## 十、实测抓包结果（2026-11-04，官方 1.01.03 → 1.01.06）
+
+> 这一节是**真机实测**，优先级高于本文前面的文档推断。
+
+### 10.1 关键修正：实际走 DFU **V2**，不是 V3
+
+logcat 实录（tag `sifli-DFU`）：
+
+```
+D/sifli-DFU  onCreate()
+I/sifli-DFU  startActionDFUNorExt
+I/sifli-DFU  start with 1.1.34
+D/sifli-DFU  handleActionDFUNorV2      ← V2
+I/sifli-DFU  connecting to <MAC>
+D/sifli-DFU  onConnectionStateChange status 0, new state 2
+I/sifli-DFU  update link / update parameter
+I/sifli-DFU  Refreshing result: true
+```
+
+→ **§四 的 `ctrl_packet` 三段式是 V3 格式**。厂商实际用 V2，控制信息走
+`33 DA AD DA AD` 管理帧的 CMD 子命令，**没有 601 字节的 ctrl 包**。
+做可行性判断时以本节为准。
+
+### 10.2 同样跑在应用层特征上，不是独立的 `sifli_sd` 服务
+
+实测数据面：`handle 0x0200`（就是日常表盘/闹钟那个特征），18,454 帧 / 3,435,181 字节。
+`sifli_sd` 服务在这次升级里**没有任何流量**。
+
+→ 结论：**SiFli 的 `SFSerialTransport` 被配置成走厂商自定义透传特征**。
+所以「OTA 一定在 `sifli_sd` 上」是错的，要按**流量形态**找：
+一次升级 = 十几分钟窗口内某 handle 上数千个 `WRITE_CMD`，每帧接近 MTU。
+
+### 10.3 帧格式（已闭合）
+
+```
+[cateID : 1B = 0x01] [片号 : 1B] [总长 : 2B LE] [数据]
+```
+
+| 片号 | 含义 | 数据 | 帧长 |
+|------|------|------|------|
+| `01` | 首片（携带总长） | 240 B | 244 B |
+| `02` | 中片 | 240 B | 244 B |
+| `03` | 尾片 | 74 B | 78 B |
+
+**一条消息 = 240+240+74 = 554 B**，`总长` 字段写 `558`（= 554 + 4 帧头）。
+
+自证：`0x022E = 558`，且 `554 + 4 = 558` ✓；
+6066 条 × 554 = 3,360,416，与 h2c 总量减帧头开销完全吻合 ✓。
+
+> 这也解释了 §2.3 的"长度字段不自洽"：**它写的是整条消息的长度，不是本帧的**。
+
+### 10.4 还原出的镜像
+
+| 项 | 值 |
+|---|---|
+| 大小 | 3,360,416 B |
+| 版本串 | `V1.01.06` ×4 |
+| 芯片串 | `SF32LB551` |
+| 文件头 | Cortex-M 向量表（`SP=0x02590020`，reset `0xC01219C5` 奇数=Thumb） |
+| 熵 / 零占比 | 7.12 / 8.2% → **明文**（密文应 ≈7.99） |
+
+**固件里直接含 DFU 接收端**（不必另找 OTA manager 镜像）：
+
+```
+Ctrl packet parser failed!        ← 对应错误码 9
+dfu_packet_download fail!
+DFU_FLASH_MSG_TYPE_VERIFY
+ble_dfu_flash_write: try to recv a mail
+dfu_reg.set_dfu_reg.reboot
+check_patch_install HCPU
+```
+
+**公钥不在应用镜像里**：全量搜索 `sig_pub.der` 原文、DER 头 `30 82 01 22 30 0d 06 09 2a 86 48 86 f7 0d 01 01 01`、
+256 字节模数 → **0 命中**。公钥应在 **OTA manager 镜像或 efuse**。
+
+### 10.5 抓包操作要点
+
+```bash
+# 1. 开发者选项 UI 开 full（settings put 无效）
+adb shell dumpsys bluetooth_manager | grep mSnoopLogSettingAtEnable   # 应为 full
+
+# 2. 升级完成后【立刻】抓 —— 环形日志会被后续流量覆盖
+adb bugreport bug.zip
+#    zip 内：FS/data/misc/bluetooth/logs/BT_HCI_*.cfa.curf
+
+# 3. 定位 + 导出
+python snoop_parse.py info hci.bin
+python snoop_parse.py dump hci.bin --handle 0x200 --dir h2c -o stream.bin
+
+# 4. 按 .lens 切帧 → 按 01/02/03 片号重组 → 拼成镜像
+```
+
+⚠️ **别用 `dumpsys bluetooth_manager` 的 `BTSNOOP_LOG_SUMMARY` 判断日志量**：
+实测它恒显示 ~262 KB，而真实文件 7.1 MB。必须走 bugreport 取。
+
+⚠️ **合成触摸事件可能点不动 Flutter 的某些行**（`input tap` 对"设备升级"无效，
+而其他行正常）。这类入口让用户手动点，别在 UI 自动化上耗时间。
