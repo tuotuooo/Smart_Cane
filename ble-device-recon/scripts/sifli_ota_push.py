@@ -100,17 +100,24 @@ async def pace_to(t0, i, rate):
 
 
 async def connect(mac, minutes=3.0, timeout=15.0):
-    """按地址直连（不扫广播），失败则守候重试。"""
+    """按地址直连，失败则守候重试。
+
+    ⚠ 不要用 `BLEDevice(mac, name, None)` 合成设备：Windows 上能连上，但
+    **不做完整服务发现**，只暴露 5 个特征（句柄 2..0x0B），DFU 通道全丢。
+    实测同一时刻同一设备：合成设备 5 个特征 / 直接传地址字符串 11 个。
+    """
     from bleak import BleakClient
-    from bleak.backends.device import BLEDevice
 
     deadline = time.time() + minutes * 60
     n = 0
     while True:
         n += 1
-        client = BleakClient(BLEDevice(mac, "SiFli", None), timeout=timeout)
+        client = BleakClient(mac, timeout=timeout)
         try:
             await client.connect()
+            nch = sum(1 for s in client.services for _ in s.characteristics)
+            print(f"[+] 已连接（第 {n} 次尝试）特征 {nch} 个  "
+                  f"MTU={getattr(client, 'mtu_size', None)}", flush=True)
             return client
         except Exception as e:
             print(f"  [{n}] 连不上: {type(e).__name__}: {e}", flush=True)
@@ -165,10 +172,16 @@ async def main(a):
         nm = await read_name(client, namec)
         print(f"[i] 设备名={nm!r}  ctrl=0x{ctrl.handle:04X}  data=0x{data.handle:04X}"
               f"  句柄总数={sum(len(s.characteristics) for s in client.services)}", flush=True)
-        if a.require_ota and nm != "GTX20":
-            print("[!] 不在 OTA manager 模式（设备名不是 GTX20），中止。"
+        if ctrl is None or data is None:
+            print("[!] 找不到 DFU 通道（-0100-/-0200-），不在 OTA manager 模式，中止。"
                   "先走握手流程让设备进 OTA。", flush=True)
             return 2
+        # 名字只作提示，不作判据：Windows 会缓存 GAP 名字，设备刚进 DFU 时
+        # 读到的常还是旧名，按名字判会把正常状态误杀。反而是"通道齐全"更可靠 ——
+        # 普通模式里根本不存在 -0100-/-0200-。
+        if a.require_ota and nm != "GTX20":
+            print(f"[!] 设备名 {nm!r} 与 GTX20 不符（多为 Windows 缓存滞后），"
+                  f"但 DFU 通道齐全，按 OTA 模式继续", flush=True)
 
         def on_note(_c, d):
             b = bytes(d)
