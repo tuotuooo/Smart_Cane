@@ -116,6 +116,13 @@ python ble-device-recon/scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
 python ble-device-recon/scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 1001099 -o pkg
 python ble-device-recon/scripts/sifli_ota_push.py --mac AA:BB:CC:DD:EE:FF --blocks pkg.blocks
 
+# 7d. 改显示值 / 配置项（默认语言、版本号）—— 判"改哪里"比"怎么改"难得多
+python ble-device-recon/scripts/sifli_bl_xref.py --image fw.bin --base 0x12070000 0x12182998
+python ble-device-recon/scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
+    --set 0x121762CA=00bf --set 0x121762D0=28462c12   # it eq→nop + 兜底改"简体中文"
+# 方法（三种引用的区别、五个坑、六轮失败对照表）见
+# ble-device-recon/references/sifli_firmware_surgery.md §八
+
 # 8. 入口不可达（未导出的 Activity）→ 改包，最后手段
 python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivity
 python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
@@ -207,6 +214,64 @@ cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
    区分方法：看控制应答的 `result_code`——是 0 就说明包被接受了，问题在后面。
 3. **数字型常量要用两种独立方法交叉验证**。同一个项目里，"用反汇编覆盖率否掉正确基址"
    和"魔数写错导致假密钥"是同一类错误：**单点推理会把一个错误放大成一串结论**。
+
+---
+
+## 第四条教训：改固件没效果，先怀疑"这行代码跑不到"
+
+把一块手表的界面改成中文、版本号改成 `V9.99.99`，**连续五轮刷机零变化**。
+
+每一轮我都把包里的字节验到了底：从 `.blocks` 还原镜像、比 sha256 与元数据一致、
+再反汇编看关键地址的指令——**补丁从来没错过**。错的全是语义：
+
+| 轮次 | 改了什么 | 为什么无效 |
+|---|---|---|
+| 1 | hook `one_level_version_get` 返回 9/99/99 | 该函数只服务日志，UI 直接打印字符串常量 |
+| 2 | 改"语言 ID" `02`→`03` | 那是日志参数；且真实语言表里 3 = 法语 |
+| 3 | 改"默认语言槽" `0x120AFE50` | 该分支是死代码，被下层兜底短路了 |
+| 4 | 改"兜底常量" `0x121762D0` | `it eq` 只在 NVS 读失败时生效，NVS 里一直有值 |
+| 5 | **消掉 `it eq`（`08 BF`→`00 BF`）** | ✅ **界面变中文** |
+
+第 3、4 轮是本项目最典型的坑——**链式兜底**：
+
+```asm
+get_current_language():
+    bl   read_nvs
+    ldr  r1, [pc,#8]
+    it   eq
+    moveq r0, r1        ; ← 自己就把空值兜底成英文，永远不返回 NULL
+    pop  {r7, pc}
+
+app_language_init():
+    bl   get_current_language
+    cbnz r0, skip       ; ← 每次都跳，下面的"默认值"是死代码
+    ldr  r4, [pc,#0x2c]
+```
+
+上层写「取不到就用默认值」，下层却已经兜底了。改默认值当然毫无反应。
+
+第 1 轮则是**显示值 ≠ 逻辑值**。判断依据就在字符串布局里：
+
+```
+"V1.01.06"                    ← 想改的是这个
+"one_level_version_get"       ← 紧跟 __func__ 符号名
+"\x1b[0;35m%s(%d):app_gse"    ← 紧跟 ANSI 彩色日志格式
+```
+
+一组字符串旁边是 `__func__` 和 ANSI 转义码 → 整块属于日志区，
+改取版本的函数当然不影响屏幕。而直接把 4 处 `"V1.01.06"` 换成 `"V9.99.99"`，
+屏幕立刻就变了（版本号是**字符串常量、有 4 个副本**，少改一个会出现"某页变了某页没变"）。
+
+四条可复用的规矩：
+
+1. **刷完没效果，先问"这段代码真的会执行吗"，不是"字节写对了吗"。**
+   看到 `if (err) use_default` 的分支，先去确认那个"取配置"函数**真的会返回错误**。
+2. **NVS / 设置分区不会被刷机清空**。所以"读配置失败"这个前提很可能不成立。
+   要么消除条件（`it`→`nop`），要么去改 NVS 本身。
+3. **没有可见反馈时，先在目标文案旁边塞一个显眼的探针**（`"Steps"`→`"ZZZZZ"`），
+   一次刷机就能区分"UI 不读这块"和"读了但开关在别处"。这一步能把猜变成测。
+4. **数字表不要靠猜**。语言 ID 表我从一段字体测试样本倒推，推出"3=中文"，
+   实际 3 是法语——真实的中文 ID 是 1。**表要读出来，不要反推出来。**
 
 ---
 
