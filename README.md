@@ -18,7 +18,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备，四类对象方法完�
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
-| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别与刷机分层** | 蓝牙适配器 或 adb |
+| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·重签打包）** | 蓝牙适配器 或 adb |
 
 依赖方向是单向的：编排层调用其余五层，五层之间互不依赖。
 
@@ -107,6 +107,15 @@ python ble-device-recon/scripts/recon.py probe <MAC> --listen 8  # 先只被动�
 python ble-device-recon/scripts/snoop_parse.py info hci.bin
 python ble-device-recon/scripts/snoop_parse.py split hci.bin --handle 0x200 --dir h2c -o out/
 
+# 7c. 固件：重组成镜像 → 定基址 → 改 → 重签 → 刷回去
+python ble-device-recon/scripts/snoop_ota.py hci.bin --handle 0x200 --dir h2c -o fw.bin
+python ble-device-recon/scripts/sifli_cave.py --image fw.bin --min 512
+python ble-device-recon/scripts/sifli_xref.py --image fw.bin --off 0x1588EC
+python ble-device-recon/scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
+    --inject 0x120701CC=hook.bin --redirect 0x121C8858=0x120701CD
+python ble-device-recon/scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 1001099 -o pkg
+python ble-device-recon/scripts/sifli_ota_push.py --mac AA:BB:CC:DD:EE:FF --blocks pkg.blocks
+
 # 8. 入口不可达（未导出的 Activity）→ 改包，最后手段
 python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivity
 python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
@@ -168,6 +177,36 @@ cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
 
 **通用教训**：当一个"理论上应该成立"的操作实测无效时，不要反复调参数——
 去做**对照实验**，用"另一个能生效的操作"证明你的工具链本身没问题。
+
+---
+
+## 第三条教训：解析器给的"句柄"不一定是 ATT 句柄
+
+刷固件这条线卡了整整两天，最后一查根因荒谬得可笑：**抓包解析器返回的 `handle`
+字段是「ACL 连接句柄 | PB 标志位」，不是 ATT 句柄。**
+
+```
+看到 0x0200 / 0x0202  →  以为是两个句柄号
+实际是同一个连接（ACL handle 0x0200）的 PB=0 / PB=1 两种分片标志
+```
+
+于是"数据走 0x0200"被我理解成"往句柄 0x0200 的特征写"，写死了一串**根本不存在的句柄号**。
+设备收到就静默丢弃，日志看起来就是"包被拒绝了"。
+
+雪上加霜的是，进 OTA 模式后设备**整套 GATT 换掉**（`0af0` 服务整组消失），
+于是"只有 7 个句柄、缺 0x0014/0x001C"又被误判成"GATT 发现被截断"，反复重连去凑齐句柄。
+
+**修好之后**：改按 UUID 后缀解析通道，第一次试就通了——
+3MB 镜像 / 18195 分片 / 61 秒推完，两个提交应答都返回 0，设备重启后**固件真的换了版本**。
+
+三条可复用的规矩：
+
+1. **别信字段名，验字段语义**。拿原始字节反解一次（`op ∈ {0x12,0x52,0x1b}` → `unpack('<H', pdu[1:3])`），
+   比读十遍解析器的参数名有用。
+2. **"设备不响应"先怀疑自己发错地方**，别急着归因到"设备校验了内容"。
+   区分方法：看控制应答的 `result_code`——是 0 就说明包被接受了，问题在后面。
+3. **数字型常量要用两种独立方法交叉验证**。同一个项目里，"用反汇编覆盖率否掉正确基址"
+   和"魔数写错导致假密钥"是同一类错误：**单点推理会把一个错误放大成一串结论**。
 
 ---
 

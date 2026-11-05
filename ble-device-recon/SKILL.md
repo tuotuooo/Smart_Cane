@@ -1,6 +1,6 @@
 ---
 name: ble-device-recon
-description: 蓝牙设备发现与协议测绘技能。当一个物理设备（智能手表/手环/耳机/车机/智能家居）需要通过蓝牙摸清能力、复现协议、判断控制面与数据面时使用。覆盖 BLE 广播扫描与厂商指纹、GATT 服务/特征全枚举、notify 订阅与探测帧收发、SPP/RFCOMM 串口探测、**零 root 抓 HCI 空口日志还原私有传输协议与容器格式**（设备已与手机绑定、PC 没有蓝牙适配器时走这条），以及**厂商 OTA/DFU 通道识别与刷机可行性分层**（含 SiFli `sifli_sd` 全协议、包格式、验签错误码、只做 Init 的低风险探测）。触发词包括：蓝牙、BLE、GATT、SPP、RFCOMM、扫描蓝牙设备、看看这个手表/手环能干什么、设备协议、逆向设备、特征值 UUID、写特征、串口透传、COM 口、配对、广播包、厂商 ID、连不上设备、搜索不到设备、抓蓝牙包、HCI 日志、btsnoop、蓝牙数据包日志、表盘格式、固件传输协议、文件传到了设备上、还原设备收到的文件、固件升级、OTA、DFU、刷固件、能不能刷自制固件、sifli_sd、升级包。注意：本技能作用对象是**物理设备**，不是 APK；分析 APK 请用 apk-analyzer。
+description: 蓝牙设备发现与协议测绘技能。当一个物理设备（智能手表/手环/耳机/车机/智能家居）需要通过蓝牙摸清能力、复现协议、判断控制面与数据面时使用。覆盖 BLE 广播扫描与厂商指纹、GATT 服务/特征全枚举、notify 订阅与探测帧收发、SPP/RFCOMM 串口探测、**零 root 抓 HCI 空口日志还原私有传输协议与容器格式**（设备已与手机绑定、PC 没有蓝牙适配器时走这条），以及**厂商 OTA/DFU 通道识别与刷机可行性分层**（含 SiFli `sifli_sd` 全协议、包格式、验签错误码、只做 Init 的低风险探测）。触发词包括：蓝牙、BLE、GATT、SPP、RFCOMM、扫描蓝牙设备、看看这个手表/手环能干什么、设备协议、逆向设备、特征值 UUID、写特征、串口透传、COM 口、配对、广播包、厂商 ID、连不上设备、搜索不到设备、抓蓝牙包、HCI 日志、btsnoop、蓝牙数据包日志、表盘格式、固件传输协议、文件传到了设备上、还原设备收到的文件、固件升级、OTA、DFU、刷固件、能不能刷自制固件、sifli_sd、升级包、改固件镜像、注入代码、代码洞、链接基址、固件分区表、救砖、变砖、JTAG、SWD、sftool。注意：本技能作用对象是**物理设备**，不是 APK；分析 APK 请用 apk-analyzer。
 agent_created: true
 ---
 
@@ -185,6 +185,37 @@ python <skill>/scripts/snoop_ota.py hci.bin --handle 0x200 --dir h2c -o fw.bin
 → **设备端验签（唯一真卡点）**。设备端强度只能靠固件/官方错误码回答，
 不能靠芯片手册推测。efuse 安全启动保护的是**上电启动链**，与 OTA 验签是两套机制。
 
+### 4.6 拿到固件镜像之后：能在哪儿改
+
+顺序固定，跳过任何一步都会得到错的地址：
+
+```bash
+# ① 先定加载基址（不确认基址，后面所有地址都是猜的）
+#    向量表 [SP, Reset] 自洽 + 复位桩字节特征（39 48 / blx / bx / fe e7）
+
+# ② 找可注入的洞
+python scripts/sifli_cave.py --image fw.bin --min 512
+
+# ③ 找"谁引用了这个字符串/常量"（必须扫字面量池，只扫直接 ADR 会全漏）
+python scripts/sifli_xref.py --image fw.bin --off 0x1588EC
+
+# ④ 打补丁 / 注入 / 改跳转（写入后用 capstone 复核，编错直接抛异常）
+python scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
+    --inject 0x120701CC=hook.bin --redirect 0x121C8858=0x120701CD
+
+# ⑤ 重新签名打包
+python scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 1001099 -o pkg
+```
+
+两条硬规矩：
+
+1. **判地址用两种独立方法交叉验证**。曾经用"反汇编覆盖率"去否掉正确答案——
+   thumb 指令太密，任何对齐位置都能解出一堆指令，覆盖率没有区分度。
+2. **动手之前先确认救砖通道**（SWD > UART4+BOOT_MODE）。SiFli 的 secboot
+   **没有启动失败计数、没有版本回退**：写进一个不启动的镜像，软件层完全无自救。
+
+细节见 `references/sifli_firmware_surgery.md`。
+
 ## 典型工作流
 
 ```
@@ -223,10 +254,16 @@ python <skill>/scripts/snoop_ota.py hci.bin --handle 0x200 --dir h2c -o fw.bin
 - `references/sifli_watchface.md`：**SiFli 方案专用**。eZip 图片格式（官方位域 + 厂商扩展块表）、
   官方双向转换工具的命令与坑、`.watch` 容器重打包（原样重打包可逐字节一致）、
   改造流程与未验证项。遇到 SF32LB 手表/开发板的表盘、开机图、动态应用资源，先读这份。
-- `references/sifli_ota.md`：**SiFli OTA 专用**（含 2026-11-04 真机抓包实测）。`sifli_sd` 服务与特征、
+- `references/sifli_ota.md`：**SiFli OTA 专用**（含 2026-11-04 真机抓包 + 2026-11-05 整链路打通）。`sifli_sd` 服务与特征、
   传输帧（`01 | 片号 | 总长LE16`，240+240+74=554）、**实际走 V2 而非 V3**、设备主导的拉取式状态机、
   `ctrl_packet` 三段布局（V3，未在实测中出现）、分块镜像格式、密钥体系、
   **验签错误码 9 是判公钥的钥匙**、风险分层与只做 Init 的最小实验、官方 imgtool/ble_serial 用法。
+  **§十一** 是完整的 12 步刷写时序（含两个致命坑：ACL 连接句柄被当成 ATT 句柄、
+  GTX20 是另一套 GATT），以及"自己打包镜像成功刷入并跑起来"的实测结果。
+- `references/sifli_firmware_surgery.md`：**拿到固件镜像之后怎么动刀**。加载基址怎么判（向量表自洽 +
+  复位桩字节，附两条错误方法）、ftab / `sec_config` 布局、OTA 可写的 img_id 风险表、
+  救砖通道优先级（SWD > UART4+BOOT_MODE > 无）、代码洞查找与代码注入、`fw_patch` 的复核机制、
+  自编代码块的最小链接脚本。**动任何非原厂镜像前必读。**
 - `references/pitfalls.md`：蓝牙专有坑库（模拟器虚拟蓝牙、BLE/SPP 混淆、bleak API 变更、
   Windows COM 口与 GATT 缓存、UUID 字节序等）。
 
