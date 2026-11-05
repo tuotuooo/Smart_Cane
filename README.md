@@ -18,7 +18,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备，四类对象方法完�
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
-| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·重签打包）** | 蓝牙适配器 或 adb |
+| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·重签打包）** | 蓝牙适配器 或 adb |
 
 依赖方向是单向的：编排层调用其余五层，五层之间互不依赖。
 
@@ -122,6 +122,16 @@ python ble-device-recon/scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
     --set 0x121762CA=00bf --set 0x121762D0=28462c12   # it eq→nop + 兜底改"简体中文"
 # 方法（三种引用的区别、五个坑、六轮刷机对照表）见
 # ble-device-recon/references/sifli_firmware_surgery.md §八
+
+# 7e. 给固件加自己的 GUI 应用（菜单多一项、点进去画自己的界面）
+python ble-device-recon/scripts/sifli_apptab.py --image fw.bin --dump      # 35 项，icon=0 可占
+python ble-device-recon/scripts/sifli_i18n.py   --image fw.bin --tables    # 每种语言一张 i18n 表
+python ble-device-recon/kit/build_app.sh        # 编 100B 机器码，塞进代码洞
+python ble-device-recon/scripts/sifli_apptab.py --image s1.bin -o s2.bin \
+    --entry Dice --icon 0x129FDCD8 --reg 0x12070341
+python ble-device-recon/scripts/sifli_i18n.py --image s2.bin -o s3.bin \
+    --put-str 0x12070400=HELLO --set-addr 0x122933FC=0x12070400
+# 机制与坑见 sifli_firmware_surgery.md §十一（应用表 / i18n 表 / LVGL 地址 / 代码洞）
 
 # 8. 入口不可达（未导出的 Activity）→ 改包，最后手段
 python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivity
@@ -272,6 +282,32 @@ app_language_init():
    一次刷机就能区分"UI 不读这块"和"读了但开关在别处"。这一步能把猜变成测。
 4. **数字表不要靠猜**。语言 ID 表我从一段字体测试样本倒推，推出"3=中文"，
    实际 3 是法语——真实的中文 ID 是 1。**表要读出来，不要反推出来。**
+
+---
+
+## 第五条教训："改文字"有四种数据源，改错一种，字节全对现象全错
+
+需求听起来只有一句话：**把菜单里的"摇骰子"改成"HELLO"**。
+
+第一版我改了应用表里的 `name[16]` 字段——`"Dice"` → `"Hello"`，字节逐位核对无误，
+刷回去菜单还是"摇骰子"。因为菜单上的文字**根本不读这个字段**：
+
+| 数据源 | 改它会不会改显示 | 特征 |
+|---|---|---|
+| 硬编码字符串常量 | ✅ 直接生效 | 字符串独立成串，附近没有表结构 |
+| **i18n 表（下标 → 指针）** | ✅ 改指针生效 | 一串密集 u32，全部指向文本块 |
+| 结构体 `name` 字段 | ❌ 只用于内部匹配 | 定长 16 字节，紧邻函数指针 |
+| 日志 / 上报串 | ❌ 不影响 UI | 旁边有 `__func__` 与 ANSI 转义码 |
+
+真实链路是三段：**应用表给出下标 → i18n 表把下标翻成指针 → 指针指向文字**。
+而且 i18n 表**每种语言一张**，只改中文那张，切回英文就变回原文。
+
+最终改动只有 5 个字节（改指针 + 洞里写 `"HELLO"`），一次刷机就成功了。
+**难的不是写字节，是判断这段文字从哪儿读。**
+
+这类错误任何字节级校验都查不出来——补丁是对的，模型是错的。
+所以现在的顺序固定成：**先 `--dump` 把结构打出来 → 再判断属于哪一类 → 最后才动字节**，
+脚本 `sifli_apptab.py` / `sifli_i18n.py` 就是为这一步写的。
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: ble-device-recon
-description: 蓝牙设备发现与协议测绘技能。当一个物理设备（智能手表/手环/耳机/车机/智能家居）需要通过蓝牙摸清能力、复现协议、判断控制面与数据面时使用。覆盖 BLE 广播扫描与厂商指纹、GATT 服务/特征全枚举、notify 订阅与探测帧收发、SPP/RFCOMM 串口探测、**零 root 抓 HCI 空口日志还原私有传输协议与容器格式**（设备已与手机绑定、PC 没有蓝牙适配器时走这条），以及**厂商 OTA/DFU 通道识别与刷机可行性分层**（含 SiFli `sifli_sd` 全协议、包格式、验签错误码、只做 Init 的低风险探测）。触发词包括：蓝牙、BLE、GATT、SPP、RFCOMM、扫描蓝牙设备、看看这个手表/手环能干什么、设备协议、逆向设备、特征值 UUID、写特征、串口透传、COM 口、配对、广播包、厂商 ID、连不上设备、搜索不到设备、抓蓝牙包、HCI 日志、btsnoop、蓝牙数据包日志、表盘格式、固件传输协议、文件传到了设备上、还原设备收到的文件、固件升级、OTA、DFU、刷固件、能不能刷自制固件、sifli_sd、升级包、改固件镜像、注入代码、代码洞、链接基址、固件分区表、救砖、变砖、JTAG、SWD、sftool、改固件语言、把界面改成中文、固件本地化、改默认语言、改默认设置、改版本号显示、固件里的字符串改了没反应。注意：本技能作用对象是**物理设备**，不是 APK；分析 APK 请用 apk-analyzer。
+description: 蓝牙设备发现与协议测绘技能。当一个物理设备（智能手表/手环/耳机/车机/智能家居）需要通过蓝牙摸清能力、复现协议、判断控制面与数据面时使用。覆盖 BLE 广播扫描与厂商指纹、GATT 服务/特征全枚举、notify 订阅与探测帧收发、SPP/RFCOMM 串口探测、**零 root 抓 HCI 空口日志还原私有传输协议与容器格式**（设备已与手机绑定、PC 没有蓝牙适配器时走这条），以及**厂商 OTA/DFU 通道识别与刷机可行性分层**（含 SiFli `sifli_sd` 全协议、包格式、验签错误码、只做 Init 的低风险探测）。触发词包括：蓝牙、BLE、GATT、SPP、RFCOMM、扫描蓝牙设备、看看这个手表/手环能干什么、设备协议、逆向设备、特征值 UUID、写特征、串口透传、COM 口、配对、广播包、厂商 ID、连不上设备、搜索不到设备、抓蓝牙包、HCI 日志、btsnoop、蓝牙数据包日志、表盘格式、固件传输协议、文件传到了设备上、还原设备收到的文件、固件升级、OTA、DFU、刷固件、能不能刷自制固件、sifli_sd、升级包、改固件镜像、注入代码、代码洞、链接基址、固件分区表、救砖、变砖、JTAG、SWD、sftool、改固件语言、把界面改成中文、固件本地化、改默认语言、改默认设置、改版本号显示、固件里的字符串改了没反应、给手表加自己的应用、改菜单文字、菜单标签、应用表、i18n 表、LVGL 注入、往固件里塞自己的代码。注意：本技能作用对象是**物理设备**，不是 APK；分析 APK 请用 apk-analyzer。
 agent_created: true
 ---
 
@@ -210,6 +210,17 @@ python scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
 python scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 1001099 -o pkg
 ```
 
+**想加自己的 GUI 应用**（菜单里多一项、点进去画自己的界面）：
+
+```bash
+python scripts/sifli_apptab.py --image fw.bin --dump        # 35 项应用表，icon=0 的是隐藏槽
+python scripts/sifli_i18n.py   --image fw.bin --tables      # 每种语言一张 i18n 表
+python scripts/sifli_i18n.py   --image fw.bin --find-str "摇骰子"  # 菜单标签的真正来源
+```
+
+编译模板在 `kit/`（`inject_app.c` + `build_app.sh`）。**菜单文字来自 i18n 表、
+不来自应用表的 name 字段**，每种语言一张表，只改中文那张切英文就变回原文。
+
 三条硬规矩：
 
 1. **判地址用两种独立方法交叉验证**。曾经用"反汇编覆盖率"去否掉正确答案——
@@ -223,6 +234,7 @@ python scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 100109
 
 > 找显示值 / 配置项（改语言、改版本号、改默认设置）有专门的判定流程，
 > 见 `references/sifli_firmware_surgery.md` §八 —— 含五个具体坑和六轮刷机对照表。
+> 加自己的 GUI 应用（应用表 / i18n 表 / LVGL 地址 / 代码洞）见 §十一。
 
 细节见 `references/sifli_firmware_surgery.md`。
 

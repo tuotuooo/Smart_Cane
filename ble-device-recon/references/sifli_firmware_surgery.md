@@ -187,6 +187,8 @@ sftool -c SF32LB55 -m nor -p COM3 write_flash 0x12000000 flash_full.bin
 | `sifli_bl_xref.py` | 找**谁调用了某个函数**（扫 BL/B.W 编码）→ 代码引用 |
 | `sifli_fw_patch.py` | 字节补丁 / 注入代码块 / 改跳转，写入后用 capstone 复核 |
 | `sifli_fw_pack.py` | 把改过的镜像打成 OTA 包（签名 + 加密） |
+| `sifli_apptab.py` | 应用表（菜单应用清单）dump / 占隐藏槽 / 改图标与注册函数 |
+| `sifli_i18n.py` | i18n 表：列语言表、查某条文字被谁引用、改指针、往洞里写串 |
 
 ### 6.1 找洞
 
@@ -518,12 +520,241 @@ python sifli_fw_patch.py --image fw.bin -o probe.bin --set 0x122CAA24=5a5a5a5a5a
 | hook `one_level_version_get` | ✅ 刷入正常，但 ❌ 屏幕无变化（见 §8.4） |
 | 消 `it eq` + 语言强制 | ✅ **界面变中文** |
 | 中文 + `V9.99.99` 同包 | ✅ **两者同时生效** |
+| 换掉 Calculator 的 handler（洞内 84B） | ✅ 计算器页面叠加出 HELLO |
+| 应用表占隐藏槽 + 自定义标签 + 自定义界面 | ✅ 菜单出现 HELLO，点进去显示 HELLO |
 | 结论 | **无整包 RSA 验签**（或验签范围不含被改的 rodata）；内容可任意改 |
 | 每次刷写耗时 | 6065~18195 分片，60.7 s，约 300 块/秒 |
 
 ---
 
-## 十、未确认项
+## 十一、给固件加自己的 GUI 应用
+
+目标：**在手表菜单里多出一个自己写的应用，点进去画自己的界面。**
+这一节把全链路的地址、结构、顺序、坑全部列出来，按顺序做一次就能复现。
+
+整条链路只动了 12 个字节：
+
+```
+代码洞写入 100B 机器码          0x12070300
+应用表隐藏槽改 3 个字段         0x12324A48 / 0x12324A5C(+name)
+i18n 表 idx69 指针改指新字符串   0x122933FC
+代码洞里写菜单文字             0x12070400  "HELLO"
+```
+
+### 11.1 应用表：菜单里的应用清单
+
+地址 `0x123246FC`，**35 项 × 0x1C 字节**，表尾紧接 RT-Thread Finsh 命令表，
+所以**只能在原有项上改字段，不能追加**（追加会踩到 Finsh 的命令名指针）。
+
+```
+偏移    类型        含义
++0x00   u32        资源 id（图标/名称的 key）
++0x04   u32        图标指针；**为 0 = 菜单里不可见**
++0x08   char[16]   内部名字（**只用于匹配，不是菜单显示的文字**）
++0x18   u32        注册函数指针（thumb 位 = +1）
+```
+
+实测（原厂 1.01.06，35 项里 10 项 `icon=0`）：
+
+```
+idx 0  0x123246FC  Activity        icon=129FDC90  reg=120B0515
+idx 4  0x1232476C  Calculator      icon=129FDCD8  reg=120B0585   ← 图标可借用
+idx 6  0x123247A4  Countdown       icon=00000000                   ← 隐藏槽
+idx 14 0x12324884  Setting         icon=129FDD98  reg=120B07E5
+idx 30 0x12324A44  Dice            icon=00000000  reg=120B0BB1   ← 本次占用
+idx 31 0x12324A60  Plane           icon=00000000
+idx 34 0x12324AB4  Power_manager   icon=00000000
+```
+
+用 `sifli_apptab.py --dump` 一次列出全部 35 项并标出哪些是隐藏槽：
+
+```bash
+python sifli_apptab.py --image fw.bin --dump
+python sifli_apptab.py --image fw.bin -o out.bin \
+    --entry Dice --icon 0x129FDCD8 --reg 0x12070341     # 占槽 + 指向自己的注册函数
+```
+
+> ⚠️ **表项偏移算错一位会静默写坏邻居**。踩过：把 `0x12324AB8` 当成 Dice 的 icon，
+> 实际是 `Power_manager[34].icon`（`0x12324AB4+4`）。当时靠 `--dump` 回显旧值
+> `Power_manage...` 才发现。**改之前一定先 dump 一遍，把旧值抄下来。**
+
+### 11.2 i18n 表：菜单文字的真正来源
+
+菜单上那行字**不来自应用表的 `name` 字段**，来自 i18n 表：一串 u32 指针，
+界面按固定下标记取。菜单标签取 **idx 69**。
+
+**每种语言各有一张表，各自指向自己语言资源块里的字符串。**
+中文固件里 idx69 = `0x122C49A6 "摇骰子"`；英文表里 idx69 = `0x122ED747 "Dice"`。
+所以**只改中文表，切回英文就看不到修改** —— 这是最容易白刷一次的地方。
+
+```
+中文表  0x122932E8   963 项   idx0 -> 0x122C4628 "简体中文"
+         idx69 @0x122933FC -> 0x122C49A6 "摇骰子"
+英文表  0x122A82CC    稀疏（大量 0，所以"连续指针"扫描扫不到它）
+         idx69 @0x122A83E0 -> 0x122ED747 "Dice"
+西语表  0x12297AC4   378 项    idx0 -> "Español"
+日语表  0x122AA620   378 项    idx0 -> "日本語"
+德语表  0x1229586C   371 项    idx0 -> "Laufkurse"
+高棉表  0x122AC40C   570 项    idx0 -> "ភាសាខ្មែរ"
+```
+
+`idx0` 是该语言的**显示名**，这一点是"名字 → 表"的钩子。语言主表就在旁边：
+
+```
+0x122AD608  13 项 × 8B  {u32 lang_id; char *显示名}   英文命名风格
+0x122AD670  13 项 × 8B  同上                          本地语言命名风格
+```
+
+| lang_id | 语言 | lang_id | 语言 |
+|---|---|---|---|
+| 1 | 简体中文 | 15 | Русский |
+| 2 | English（UK） | 23 | Portuguese |
+| 3 | Français | 8 | Polski |
+| 4 | Deutsch | 12 | Nederlands |
+| 5 | Italiano | 31 | العربية |
+| 6 | Español | 39 | ភាសាខ្មែរ |
+| 7 | 日本語 | | |
+
+**ID 不是按顺序排的**：3 是法语，不是第三种语言；39 才是高棉语。
+早期"ID 3 = 中文"的推断就是从这里错的。判断语言必须读名字，不要猜 ID。
+
+```bash
+python sifli_i18n.py --image fw.bin --tables            # 找出所有语言表
+python sifli_i18n.py --image fw.bin --langs 0x122AD608  # 语言 ID → 显示名 → 对应表
+python sifli_i18n.py --image fw.bin --find-str "摇骰子"  # 这条文字被哪些槽引用
+python sifli_i18n.py --image fw.bin -o out.bin --put-str 0x12070400=HELLO \
+    --set-addr 0x122933FC=0x12070400
+```
+
+`--find-str` 是关键：它直接告诉你"这条文字在几张表里被引用"。
+想让标签在所有语言下都变，就把列出来的每个槽都改掉。
+
+### 11.3 注册 API 与 handler 协议
+
+```
+0x1215A118   gui_app_regist_msg_handler_ext(const char *name, void *handler, int flag)
+             Thumb 指针 = 0x1215A119
+             内部 memcmp 16 字节名字；未命中则新建 0x90 字节注册项
+
+handler 原型  int handler(int msg, void *a, void *b, void *c)
+             msg == 0  建立界面
+             msg == 3  销毁界面
+```
+
+开机时框架遍历应用表、逐项调用 `+0x18` 的注册函数；点图标时框架按名字找到
+handler 并投递 `msg=0`。
+
+最小可用应用（`kit/inject_app.c`，编译出来 100 字节）：
+
+```c
+void hello_regist(void) { APP_REGIST("Hello", hello_handler, 0); }
+
+static int hello_handler(int msg, int a, int b, int c)
+{
+    if (msg == 0) {                       /* 建界面 */
+        void *scr = GET_SCR_ACT(0);
+        void *lbl = LABEL_CREATE(scr, 0);
+        LABEL_SET_TXT(lbl, "HELLO");
+        OBJ_SET_POS(lbl, 55, 100);
+    }
+    return 0;                             /* 销毁路径什么都不做，框架自己 clean */
+}
+```
+
+**注册函数必须排在编译单元的最后一个之前**（`ENTRY` 指向它，链接脚本把它放在块首），
+因为应用表里记的是它的绝对地址 `0x12070341`。
+
+### 11.4 已验证的 LVGL 地址
+
+符号表里有 1440 项 `{name_ptr, func_addr}`，但 **ICF 合并导致 name/func 配对不可靠**
+（表说 `lv_label_create = 0x121AC008`，实测那个是 `lv_label_set_text`）。
+下面这些全部是**按调用上下文反汇编语义核对过**的：
+
+| 地址 | 函数 | 判定依据 |
+|---|---|---|
+| `0x121A9730` | `lv_disp_get_scr_act(disp)` | `cbnz r0` → `bl lv_disp_get_default` → `ldr r0,[r0,#0x64]`，即 `disp->act_scr` |
+| `0x121AA9A4` | `lv_label_create(parent)` | 调用点紧接着把返回值传给 `set_text` |
+| `0x121AC008` | `lv_label_set_text(obj, txt)` | `mov r5,r0`(obj) / `mov sl,r1`(text) |
+| `0x1219EB14` | `lv_obj_set_pos(obj, x, y)` | `mov r4,r1` / `mov r5,r0`，双参数都是整数 |
+| `0x122199D4` | 计算器 handler | 只出现在 Calculator 注册函数的池槽里 |
+| `0x120B0584` | 计算器注册函数 | 4 条有效指令：`ldr r1,[pc,#0x18]` / `adr r0,"Calculator"` / `bl regist` |
+
+想扩展控件时，**照上面这套"看调用上下文"的办法逐个确认**，不要信符号表的 name。
+
+### 11.5 替换已有 app 的 handler（更省字节的路线）
+
+如果只是想在某个已有页面上叠内容，不必新增应用，改一个池槽就够了：
+
+```
+0x120B0584  Calculator 注册函数：
+    push {r7,lr}
+    ldr  r1,[pc,#0x18]     ; 槽 0x120B05A0 = 0x122199D5（原 handler，带 thumb 位）
+    adr  r0,"Calculator"
+    movs r2,#0
+    bl   0x1215A118
+```
+
+把 `0x120B05A0` 的 4 字节换成 `my_handler|1`，**原 handler 地址先存进自己的常量**，
+新 handler 开头 `blx` 回去跑原逻辑，再叠自己的绘制。计算器界面照常出现，
+上面多一行 HELLO。这条路只需改 4 字节 + 注入代码块，不碰应用表和 i18n 表。
+
+### 11.6 完整操作序列
+
+```bash
+# 0) 备份当前镜像，确认洞和表
+python sifli_cave.py    --image fw.bin --min 256
+python sifli_apptab.py  --image fw.bin --dump
+
+# 1) 编译注入块（链接基址必须等于注入地址）
+cd kit && ./build_app.sh inject_app.c hello_regist && cd ..
+#    build/inject_app.bin = 100 B，脚本自动查代码里的 flash 常量 thumb 位
+
+# 2) 注入 + 占应用表隐藏槽
+python sifli_fw_patch.py --image fw.bin -o s1.bin \
+    --inject 0x12070300=kit/build/inject_app.bin
+python sifli_apptab.py   --image s1.bin -o s2.bin \
+    --entry Dice --icon 0x129FDCD8 --reg 0x12070341
+
+# 3) 写菜单文字 + 改 i18n 指针
+python sifli_i18n.py --image s2.bin -o s3.bin \
+    --put-str 0x12070400=HELLO --set-addr 0x122933FC=0x12070400
+
+# 4) 打包 + 推流（见 sifli_ota.md §十一）
+python sifli_fw_pack.py --keys <sifli02目录> --image s3.bin --fw-ver 1001099 -o pkg
+python sifli_ota_push.py --blocks pkg.blocks --ctrl pkg.ctrl
+```
+
+耗时：6065 块 / 60.7 秒，设备约 15 秒后恢复广播。
+
+### 11.7 坑清单（都踩过）
+
+| 坑 | 现象 | 根因 / 判据 |
+|---|---|---|
+| 改 `name[16]` 想改菜单文字 | 字节全对，菜单文字不变 | 菜单读 i18n 表 idx，不读 name 字段 |
+| 只改中文表 | 中文下生效，切英文变回原文 | 每种语言一张表 |
+| 函数指针缺 thumb 位 | 点图标就 HardFault / 重启 | `blx` 按 ARM 态跳转；常量必须是奇数 |
+| `--set` 字节序写反 | 刷完开不了机 | `0x12070341` → `41030712`，写成 `41037012` = `0x12700341`（镜像外） |
+| 表项偏移算错一位 | 改坏了邻居字段 | Dice 的 icon 是 `0x12324A48`，不是 `0x12324AB8`（那是 Power_manager） |
+| 往应用表后面追加项 | 开机异常 | 表尾紧接 Finsh 命令表 |
+| 误判 i18n 索引 | 改了没反应 | 先 `--find-str` 确认槽地址，别凭下标猜 |
+
+### 11.8 实测（SF32LB551 手表，2026-11）
+
+| 目标 | 改动 | 结果 |
+|---|---|---|
+| 自编译代码能否被执行 | 洞内 84B + 换 Calculator 池槽 4B | ✅ 计算器页面上出现 HELLO |
+| 能否新增应用 | 洞内 100B + 应用表 3 字段 + 写串 | ✅ 菜单多出 HELLO 项 |
+| 菜单文字能否自定义 | i18n idx69 指针 + 洞内写串 5B | ✅ 菜单显示 HELLO |
+| 点进去能否画界面 | handler 里 create_label + set_text | ✅ 页面居中显示 HELLO |
+| 洞容量 | `0x120701CC` 起 1524B | 用掉 ~310B，余 ~1.2KB |
+
+> 洞的余量直接决定能做多大的应用。一个完整计算器（12 个按钮 + 表达式求值）
+> 大约要 500~1500 字节，**偏紧**。真要写大应用得先找新的洞，
+> 或者把 UI 声明压成表驱动（数据在 rodata，代码只有几十字节的循环）。
+
+---
+
+## 十二、未确认项
 
 | 项 | 状态 |
 |---|---|
@@ -534,6 +765,10 @@ python sifli_fw_patch.py --image fw.bin -o probe.bin --set 0x122CAA24=5a5a5a5a5a
 | 中文字库完整性 | ❓ 中文块文案齐全，但字库是否含全部字形需实际翻页验证 |
 | 默认语言常量的位置 | ❓ 已定位 `default language: %d(%s)` 日志点，尚未追到写入值 |
 | 屏幕 / 触摸 / PMIC / pinmux 参数 | ❓ 自编固件 bring-up 需要，只能从现有镜像反推 |
+| 改中文 i18n 表后切英文会不会变回原文 | ❓ 结构上英文表独立（`0x122A82CC` idx69=`Dice`），未实测切换 |
+| 按键/触摸事件回调（`lv_obj_add_event_cb`）地址 | ❓ 做交互式应用必须，尚未定位 |
+| 应用表 `res_id` 与图标资源的对应规则（能否画自定义图标） | ❓ 现在只能借用已有图标 |
+| 除 `0x120701CC` 外是否有更大的代码洞 | ❓ 只按 0x00/0xFF 填充扫过，未扫"可达但无用"的函数体 |
 
 > ⚠️ 一条通用教训：**先验常量，再推理**。
 > 本项目早期因为一个魔数写错，级联出"找到 XOR 密钥 → 发现双区加密容器"两串假结论。
