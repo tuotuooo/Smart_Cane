@@ -120,7 +120,7 @@ python ble-device-recon/scripts/sifli_ota_push.py --mac AA:BB:CC:DD:EE:FF --bloc
 python ble-device-recon/scripts/sifli_bl_xref.py --image fw.bin --base 0x12070000 0x12182998
 python ble-device-recon/scripts/sifli_fw_patch.py --image fw.bin -o out.bin \
     --set 0x121762CA=00bf --set 0x121762D0=28462c12   # it eq→nop + 兜底改"简体中文"
-# 方法（三种引用的区别、五个坑、六轮失败对照表）见
+# 方法（三种引用的区别、五个坑、六轮刷机对照表）见
 # ble-device-recon/references/sifli_firmware_surgery.md §八
 
 # 8. 入口不可达（未导出的 Activity）→ 改包，最后手段
@@ -219,7 +219,7 @@ cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
 
 ## 第四条教训：改固件没效果，先怀疑"这行代码跑不到"
 
-把一块手表的界面改成中文、版本号改成 `V9.99.99`，**连续五轮刷机零变化**。
+把一块手表的界面改成中文、版本号改成 `V9.99.99`，**连续四次刷机零变化**。
 
 每一轮我都把包里的字节验到了底：从 `.blocks` 还原镜像、比 sha256 与元数据一致、
 再反汇编看关键地址的指令——**补丁从来没错过**。错的全是语义：

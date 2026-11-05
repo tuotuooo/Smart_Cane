@@ -217,12 +217,12 @@ python scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 100109
 2. **动手之前先确认救砖通道**（SWD > UART4+BOOT_MODE）。SiFli 的 secboot
    **没有启动失败计数、没有版本回退**：写进一个不启动的镜像，软件层完全无自救。
 3. **刷完没效果时，先怀疑"这行代码跑不到"，而不是"字节写错了"**。
-   实测连续五轮刷机零变化的案例里，补丁字节**一次都没错过**，
+   实测连续四次刷机零变化的案例里，补丁字节**一次都没错过**，
    全是语义错：改的函数不负责显示、改的分支被下层兜底短路、
    改的常量只在读 NVS 失败时生效。**每次刷机前问的是"这段代码真的会执行吗"。**
 
 > 找显示值 / 配置项（改语言、改版本号、改默认设置）有专门的判定流程，
-> 见 `references/sifli_firmware_surgery.md` §八 —— 含五个具体坑和六轮对照表。
+> 见 `references/sifli_firmware_surgery.md` §八 —— 含五个具体坑和六轮刷机对照表。
 
 细节见 `references/sifli_firmware_surgery.md`。
 
@@ -276,7 +276,7 @@ python scripts/sifli_fw_pack.py --keys <sifli02> --image out.bin --fw-ver 100109
   自编代码块的最小链接脚本。
   **§八 是"定位显示值/配置项"的完整方法论**：三种引用的区别（数据/代码/初始化赋值）、
   五个具体坑（链式兜底、NVS 不被清空、显示值≠逻辑值、多语言按块切、无反馈时要先塞探针）、
-  判定流程与六轮失败对照表。改语言、改版本号、改默认设置前必读。
+  判定流程与六轮刷机对照表。改语言、改版本号、改默认设置前必读。
   **动任何非原厂镜像前必读本文件。**
 - `references/pitfalls.md`：蓝牙专有坑库（模拟器虚拟蓝牙、BLE/SPP 混淆、bleak API 变更、
   Windows COM 口与 GATT 缓存、UUID 字节序等）。
