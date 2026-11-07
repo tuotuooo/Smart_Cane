@@ -221,6 +221,23 @@ python scripts/sifli_i18n.py   --image fw.bin --find-str "摇骰子"  # 菜单�
 编译模板在 `kit/`（`inject_app.c` + `build_app.sh`）。**菜单文字来自 i18n 表、
 不来自应用表的 name 字段**，每种语言一张表，只改中文那张切英文就变回原文。
 
+**想改行为（振动、背光、按键响应）**：
+
+先读 `references/sifli_motor_hook.md`。要点：
+
+- **先判双核**：BLE 协议栈在 LCPU，UI/马达在 HCPU。改 HCPU 镜像**不会**改变 BLE 行为。
+  判据是被分发的东西的 ID 空间（`0x9xxx` = 跨核 IPC，不是应用协议）。
+- **别在消息分发器里调带队列的 API**：`app_motor_control(mode)` 安全；
+  `vib_start(mode,cycles)` 内部 `rt_mq_send`，会死锁。
+- **汇编注入必须过 `ld -T`**，否则 BL 相对偏移全错、开机即死。见 `kit/motor_hook.ld`。
+
+```bash
+B=".../Arm GNU Toolchain .../bin"
+"$B/arm-none-eabi-as"  -mcpu=cortex-m33 -mthumb kit/motor_hook.s -o hook.o
+"$B/arm-none-eabi-ld"  -T kit/motor_hook.ld hook.o -o hook.elf
+"$B/arm-none-eabi-objcopy" -O binary -j .text hook.elf hook.bin   # 40 B
+```
+
 三条硬规矩：
 
 1. **判地址用两种独立方法交叉验证**。曾经用"反汇编覆盖率"去否掉正确答案——
@@ -231,6 +248,13 @@ python scripts/sifli_i18n.py   --image fw.bin --find-str "摇骰子"  # 菜单�
    实测连续四次刷机零变化的案例里，补丁字节**一次都没错过**，
    全是语义错：改的函数不负责显示、改的分支被下层兜底短路、
    改的常量只在读 NVS 失败时生效。**每次刷机前问的是"这段代码真的会执行吗"。**
+4. **先备份、先验最小改动、先看电量。** 顺序是：备份原厂镜像 → 刷一次原厂验证链路通
+   → 只改一个字符串常量确认"改了/刷了/生效了" → 再上真补丁。
+   电量 `<50%` 时不要刷：DFU 界面屏幕常亮，中途掉电会留下"已擦未写"的空白分区。
+   **进 DFU 后一口气推完，中间不重连、不探测、不打印多余日志。**
+
+> 一次刷到不开机的完整复盘（DFU 0% 的三个客户端坑 + 为什么可能真擦空 +
+> 救砖路径）见 `references/sifli_motor_hook.md` §七、§八。
 
 > 找显示值 / 配置项（改语言、改版本号、改默认设置）有专门的判定流程，
 > 见 `references/sifli_firmware_surgery.md` §八 —— 含五个具体坑和六轮刷机对照表。
@@ -290,8 +314,13 @@ python scripts/sifli_i18n.py   --image fw.bin --find-str "摇骰子"  # 菜单�
   五个具体坑（链式兜底、NVS 不被清空、显示值≠逻辑值、多语言按块切、无反馈时要先塞探针）、
   判定流程与六轮刷机对照表。改语言、改版本号、改默认设置前必读。
   **动任何非原厂镜像前必读本文件。**
+- `references/sifli_motor_hook.md`：**改设备行为（振动/提醒）专用**。双核架构判据
+  （LCPU 跑 BLE、HCPU 跑 UI 与马达 —— 改错核等于白干）、马达 API 安全/危险分级
+  （`app_motor_control` vs 会死锁的 `vib_start`）、IPC 消息分发表完整布局、
+  汇编注入的链接脚本与偏移陷阱、`BLE→振动` 现成的 `0x9009` 通路、`vib_start` 不振的
+  三个待验假设。**§七、§八 是一次刷到不开机的事故复盘 + 救砖路径。**
 - `references/pitfalls.md`：蓝牙专有坑库（模拟器虚拟蓝牙、BLE/SPP 混淆、bleak API 变更、
-  Windows COM 口与 GATT 缓存、UUID 字节序等）。
+  Windows COM 口与 GATT 缓存、UUID 字节序等；§七 是固件注入与双核的七个坑）。
 
 ## Notes
 

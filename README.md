@@ -18,7 +18,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备，四类对象方法完�
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
-| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** | 蓝牙适配器 或 adb |
+| 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** / **双核定位 + 行为注入（振动）** | 蓝牙适配器 或 adb |
 
 依赖方向是单向的：编排层调用其余五层，五层之间互不依赖。
 
@@ -132,6 +132,23 @@ python ble-device-recon/scripts/sifli_apptab.py --image s1.bin -o s2.bin \
 python ble-device-recon/scripts/sifli_i18n.py --image s2.bin -o s3.bin \
     --put-str 0x12070400=HELLO --set-addr 0x122933FC=0x12070400
 # 机制与坑见 sifli_firmware_surgery.md §十一（应用表 / i18n 表 / LVGL 地址 / 代码洞）
+
+# 7f. 改设备行为（振动/提醒）—— 先判双核，再选安全的 API
+#     BLE 协议栈在 LCPU，UI/马达在 HCPU。改 HCPU 镜像不会改变 BLE 行为。
+#     判据：被分发的东西是 0x9xxx 段 = 跨核 IPC，不是应用协议。
+#     马达两套入口：app_motor_control(mode) 安全；vib_start() 走 rt_mq_send 会死锁。
+B=".../Arm GNU Toolchain .../bin"
+"$B/arm-none-eabi-as"      -mcpu=cortex-m33 -mthumb ble-device-recon/kit/motor_hook.s -o hook.o
+"$B/arm-none-eabi-ld"      -T ble-device-recon/kit/motor_hook.ld hook.o -o hook.elf   # ← 不能省
+"$B/arm-none-eabi-objcopy" -O binary -j .text hook.elf hook.bin                      # 40 B
+# 再注入 + 重签（fw_ver 必须与上次成功一致，调大一位会被静默拒）
+# 链路与事故复盘见 ble-device-recon/references/sifli_motor_hook.md
+
+# 7g. 一条命令刷完（用户模式 → DFU → 推流，父进程进 DFU / 子进程推）
+python ble-device-recon/scripts/sifli_ota_flash.py --mac AA:BB:CC:DD:EE:FF \
+    --ctrl pkg/ctrl_packet.bin --blocks pkg/blocks.bin
+# 三个把刷机拖死一整天的坑（缺 0x22 / 同进程二次连接 / GTX20 不广播）
+# 见 sifli_ota.md §十二
 
 # 8. 入口不可达（未导出的 Activity）→ 改包，最后手段
 python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivity
