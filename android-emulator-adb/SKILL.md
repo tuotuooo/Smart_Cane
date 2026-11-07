@@ -93,6 +93,16 @@ python find_and_connect.py -- shell am start -n com.pkg/.SplashActivity
 python find_and_connect.py -- -s 127.0.0.1:5555 shell pm list packages
 ```
 
+## MuMu 专项（Nx 新版实测）
+
+1. **`--info` 报 `root: NO` 不等于没开 root。** MuMu 的 adbd 默认跑在 shell 身份，
+   设置里开了 root 也需要补一条 `adb root`（返回 `restarting adbd as root`）才提权。
+   跳过这步会把可用环境误判成不可用。详见 `references/emulator_ports.md §1.1`。
+2. **自带 adb 在 `C:\Program Files\Netease\MuMu\nx_main\adb.exe`**（不是老路径
+   `C:\Program Files\MuMu\emulator\*\adb.exe`）。进程名是 `MuMuNxMain/NxDevice`。
+3. **一台实例会同时暴露 16384 / 7555 / emulator-5554**，`product/model/device` 三行一致
+   就是同一台，别当三个设备用。详见 §1.2。
+
 ## 雷电（LDPlayer）专项
 
 雷电是最常用也最容易踩坑的模拟器，要点：

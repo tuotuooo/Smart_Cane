@@ -12,6 +12,7 @@
 | 夜神 Nox | 62001 | 62025 / 62026 / 62027… | `C:\Program Files\Nox\bin\adb.exe` |
 | MuMu (旧) | 7555 | — | `C:\Program Files\MuMu\emulator\*\adb.exe` |
 | MuMu12 | 16384 | 16416 / 16448… | `C:\Program Files\MuMu\emulator\*\adb.exe` |
+| **MuMu Nx（新版）** | 16384（同时映射 7555 / emulator-5554） | 见 §1.2，多通道 ≠ 多实例 | `C:\Program Files\Netease\MuMu\nx_main\adb.exe`（进程名 `MuMuNxMain/NxDevice`，adb 版本 36.0.0） |
 | 逍遥 / 腾讯手游助手 | 21503 | — | 随安装目录 |
 | BlueStacks 5 | 5555 (经 `bluestacks.conf` 配置) | 自定义 | `C:\Program Files\BlueStacks_nxt\*\adb.exe` |
 | 海马玩 Droid4X | 58001 | — | 随安装目录 |
@@ -43,6 +44,50 @@ adb shell id
 - 只有 `context=u:r:shell:s0` / `uid=2000(shell)` = 没开成功。
 - 雷电：设置里勾选 root 后**必须重启实例**；`adb root` 报
   `adbd cannot run as root in production builds` 就是没开 root。
+
+### 1.1 ⚠️ MuMu 即使开了 root，`adbd` 默认也不是 root —— 会误判成"没开"
+
+**实测（2026-11-07，MuMu Nx / Android 15 / SDK 35）：**
+
+```
+$ adb shell id
+uid=2000(shell) ... context=u:r:shell:s0        ← 看起来没 root
+$ python find_and_connect.py --info
+root      : NO                                  ← 画像也说 NO
+
+$ adb root
+restarting adbd as root                         ← 其实设置里早就开了
+$ adb shell id
+uid=0(root) ... context=u:r:su:s0               ← 提权成功
+```
+
+**判据：MuMu 上 `--info` 报 `root: NO` 时，先补一步 `adb root` 再看，不要直接断定没开。**
+
+区别在机制：雷电是把整个 adbd 以 root 起，MuMu 的 adbd 默认跑在 shell，
+需要显式 `adb root` 让它重启成 root 身份。这一步不影响 App 侧，
+不需要重启模拟器，也不需要进设置。
+
+`adb root` 之后 adbd 会重启，**当次连接会断一下**，其他端口（7555 / emulator-5554）
+可能同时掉线，重跑一次 `find_and_connect.py` 就恢复了。
+
+### 1.2 MuMu 一台实例会暴露多个通道，别当多台设备
+
+```
+127.0.0.1:16384   device  model:SM_A5260    ← MuMu12 主通道
+127.0.0.1:7555    device  model:SM_A5260    ← 同一实例
+emulator-5554     device  model:SM_A5260    ← 还是同一实例
+```
+
+三行 `product/model/device` 完全一致就是同一个实例的端口映射。
+按 `transport_id` 或 `ro.serialno` 区分才有意义；只看端口会误以为是三个设备。
+
+### 1.3 adb server 被反复清理时，用技能脚本透传而不是裸调 adb
+
+某些环境下每次命令执行完 adb server 就被回收，下一次调用又要
+`daemon not running; starting now`，连接状态全丢（`device not found`）。
+
+`find_and_connect.py` 每次调用都会重新发现 + 重连 + 自动补 `-s`，所以
+**一律走 `find_and_connect.py -- <adb 子命令>`，不要手拼 adb 路径**。
 
 ### 2. 不要依赖 `su`
 
