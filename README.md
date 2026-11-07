@@ -1,11 +1,11 @@
-# APK 逆向六件套（Skill Matrix）
+# APK 逆向七件套（Skill Matrix）
 
 一套按「层次」拆开的 Android 逆向技能包。每一层都能单独使用，组合起来覆盖从连设备到出报告的完整链路。
 
 设计原则：**能拆开复用**。只想连模拟器就只加载连接层，只想看静态信息就只加载静态层，上下文不浪费。
 
 **分层依据是「对象边界」，不是功能分类**：
-APK 文件 / 进程内存 / 网络流量 / 物理设备，四类对象方法完全不同，混用会让两份结论都失真。
+APK 文件 / 进程内存 / 网络流量 / 物理设备 / 结论，五类对象方法完全不同，混用会让两份结论都失真。
 
 ---
 
@@ -19,8 +19,9 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备，四类对象方法完�
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
 | 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** / **双核定位 + 行为注入（振动）** | 蓝牙适配器 或 adb |
+| 沉淀 | [`reverse-sediment`](reverse-sediment/) | **结论** | 结论质量审查（置信度分级·可复现校验·冲突召回·推翻记录）+ 归属路由 + 成文 + 全量技能索引 | 无 |
 
-依赖方向是单向的：编排层调用其余五层，五层之间互不依赖。
+依赖方向是单向的：编排层调用其余五个功能层，五个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。
 
 ```
 apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 / 抓日志)
@@ -29,6 +30,8 @@ apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 
                       │         └──> apk-analyzer dexfile   (dump 产物回到静态链)
                       ├──> android-https-capture  (App ↔ 服务器)
                       └──> ble-device-recon       (App ↔ 硬件)
+                                  │
+        任一层产出的判据/坑/工具 ──┴──> reverse-sediment  (审查 → 去重 → 归位 → 成文)
 ```
 
 **两条最容易混的边界**：
@@ -154,6 +157,13 @@ python ble-device-recon/scripts/sifli_ota_flash.py --mac AA:BB:CC:DD:EE:FF \
 python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivity
 python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
 # 再用 apksig 重签 v2/v3（android-https-capture 的 cap.py info 也能判该不该改包）
+
+# 9. 收工：把这次的判据/坑/工具沉淀成技能资产（先审质量，再成文）
+S=~/.workbuddy/skills/reverse-sediment/scripts/sediment.py
+python $S template -o claims.json              # 空模板，含一条 refuted 示例
+python $S all      claims.json -o out/         # 校验 + 冲突召回 + 归属 + 渲染
+python $S index                                # 全量技能总览，决定"并进哪个"还是"该新建"
+# 规则见 reverse-sediment/references/writing_rules.md（结论句三坏形态 / 证据分级 / 坑的公式）
 ```
 
 ---
@@ -162,10 +172,42 @@ python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
 
 ```bash
 cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
-      android-https-capture ble-device-recon ~/.workbuddy/skills/
+      android-https-capture ble-device-recon reverse-sediment ~/.workbuddy/skills/
 ```
 
 每个目录都是完整的 skill（`SKILL.md` + `references/` + `scripts/`），可独立安装、独立加载。
+
+---
+
+## 沉淀层：把经验固化成资产，而不是记流水账
+
+`reverse-sediment` 是这个仓库里唯一的**元技能**——它不分析任何对象，只审查结论。
+
+起因很直接：这套技能在实战中产出了**三层连环误判**（见下一节），而三次误判**没有一次是因为"没记录"**，都是"记了但没验"。所以它把"验证"做成了不可绕过的卡点。
+
+四个卡点，脚本会拦：
+
+| 卡点 | 拦什么 | 为什么 |
+|---|---|---|
+| 置信度 | 必须 `confirmed`/`suspected`/`refuted` 三选一 | 模糊表述会被下游当成确定事实引用 |
+| 可复现 | 每条必须有能跑的命令或明确观察步骤 | **没有验证方法的结论 = 传闻** |
+| 冲突 | 与现有 skill 的旧结论撞车必须二选一 | 同一知识点散两处、互相矛盾，比没有更糟 |
+| 推翻记录 | `refuted` 必须写全"当初当成什么 + 为什么错" | 从同一个错误常量出发，下次一定推出同一个错 |
+
+```bash
+S=~/.workbuddy/skills/reverse-sediment/scripts/sediment.py
+
+python $S template -o claims.json      # 空模板
+python $S all      claims.json -o out/ # 校验 + 冲突召回 + 归属 + 渲染
+python $S index                        # 全部技能总览表（决定"并进哪个"还是"该新建"）
+```
+
+实测效果：故意塞进去的不合格结论被逐条拦下（缺 `verify`、`confidence` 写成"maybe"、
+已推翻却没写 `why_wrong`），冲突召回对刚写进文档的结论给出 0.46/0.36/0.34 三处命中，
+不相关内容零误报。
+
+**它对本仓库最大的价值在"归属路由"**：新结论先问"现有 skill 覆盖了吗"，
+有就合并进对应章节，没有才新建。避免技能数量膨胀、知识点四散。
 
 ---
 
@@ -186,6 +228,10 @@ cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
 1. 任何"我发现密钥了"的结论，必须过**熵要降 + 密钥能在代码里找到出处**两道检验；
 2. `header XOR magic` 对任意数据恒成立，**永远是假象**；
 3. 判断加固看**类数/方法数**，不看文件体积。
+
+这三次误判也是 [`reverse-sediment`](reverse-sediment/) 存在的原因：
+它不是"总结生成器"，而是把这套流程里最容易被跳过的那一步——**验证**——做成了不可绕过的卡点。
+删掉错误结论等于把"这条路走不通"的知识也删了，所以它强制保留推翻记录。
 
 ---
 
