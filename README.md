@@ -1,11 +1,11 @@
-# APK 逆向八件套（Skill Matrix）
+# APK 逆向七件套（Skill Matrix）
 
 一套按「层次」拆开的 Android 逆向技能包。每一层都能单独使用，组合起来覆盖从连设备到出报告的完整链路。
 
 设计原则：**能拆开复用**。只想连模拟器就只加载连接层，只想看静态信息就只加载静态层，上下文不浪费。
 
 **分层依据是「对象边界」，不是功能分类**：
-APK 文件 / 进程内存 / 网络流量 / 物理设备 / **反作弊检测面** / 结论，六类对象方法完全不同，混用会让两份结论都失真。
+APK 文件 / 进程内存 / 网络流量 / 物理设备 / 结论，五类对象方法完全不同，混用会让两份结论都失真。
 
 ---
 
@@ -19,10 +19,9 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备 / **反作弊检测面**
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
 | 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** / **双核定位 + 行为注入（振动）** | 蓝牙适配器 或 adb |
-| 检测面 | [`anticheat-surface-recon`](anticheat-surface-recon/) | **反作弊栈的检测面** | 内核 avc 审计被动还原探测清单 / 库能力面与归属判定 / 假阳性清理 / pcap·UDP 结构挖掘 / 设备结构面门禁 | 无（静态部分）；adb（运行时部分） |
 | 沉淀 | [`reverse-sediment`](reverse-sediment/) | **结论** | 结论质量审查（置信度分级·可复现校验·冲突召回·推翻记录）+ 归属路由 + 成文 + 全量技能索引 | 无 |
 
-依赖方向是单向的：编排层调用其余六个功能层，六个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。
+依赖方向是单向的：编排层调用其余五个功能层，五个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。
 
 ```
 apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 / 抓日志)
@@ -30,17 +29,13 @@ apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 
                       ├──> apk-runtime-dump       (运行时脱壳，需 root)
                       │         └──> apk-analyzer dexfile   (dump 产物回到静态链)
                       ├──> android-https-capture  (App ↔ 服务器)
-                      ├──> ble-device-recon       (App ↔ 硬件)
-                      └──> anticheat-surface-recon (App ↔ 反作弊栈；只观测不规避)
+                      └──> ble-device-recon       (App ↔ 硬件)
                                   │
         任一层产出的判据/坑/工具 ──┴──> reverse-sediment  (审查 → 去重 → 归位 → 成文)
 ```
 
-**三条最容易混的边界**：
+**两条最容易混的边界**：
 - 从 APK 里读出协议 → `apk-analyzer`；到真设备上验证协议 → `ble-device-recon`。
-- 抓包是"复制旁边的包"，反作弊检测是"它看不看得见你"——**两件事**。
-  后者的判据在 `anticheat-surface-recon`：`anticheat-surface-recon` 负责"我的观测行为会不会进视野"，
-  `android-https-capture` 负责"怎么把包拿到手"。
 - 改包（`apk-analyzer`）是**最后手段**：签名变 → 数据/登录/绑定全丢、官方升级断裂。
   有抓包/脱壳能拿到同样信息时，不要改包。
 
@@ -163,17 +158,7 @@ python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivi
 python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
 # 再用 apksig 重签 v2/v3（android-https-capture 的 cap.py info 也能判该不该改包）
 
-# 9. 检测面：只观测，不规避（对象是"反作弊栈在看什么"）
-A=anticheat-surface-recon/scripts
-adb logcat -b all > logcat.txt
-python $A/probe_inventory.py --logcat logcat.txt --json inv.json   # 内核替它记账
-python $A/ace_scan.py *.so --json ace.json                        # 谁真的有检测能力
-python $A/ace_gate.py --serial <设备> --inventory inv.json --json base.json   # 环境门禁基线
-python $A/pcap_analyze.py cap.pcap --json net.json                # pcapng 也能读
-python $A/udp_flow.py cap.pcap                                    # tick rate / 载荷分布
-python $A/snapshot_miner.py cap.pcap                              # 固定 stride 记录数组
-
-# 10. 收工：把这次的判据/坑/工具沉淀成技能资产（先审质量，再成文）
+# 9. 收工：把这次的判据/坑/工具沉淀成技能资产（先审质量，再成文）
 S=~/.workbuddy/skills/reverse-sediment/scripts/sediment.py
 python $S template -o claims.json              # 空模板，含一条 refuted 示例
 python $S all      claims.json -o out/         # 校验 + 冲突召回 + 归属 + 渲染
@@ -187,8 +172,7 @@ python $S index                                # 全量技能总览，决定"并
 
 ```bash
 cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
-      android-https-capture ble-device-recon anticheat-surface-recon \
-      reverse-sediment ~/.workbuddy/skills/
+      android-https-capture ble-device-recon reverse-sediment ~/.workbuddy/skills/
 ```
 
 每个目录都是完整的 skill（`SKILL.md` + `references/` + `scripts/`），可独立安装、独立加载。
@@ -454,60 +438,8 @@ CPU 把 label 数据当指令执行，HardFault，看门狗重启。
 
 ---
 
-## 第七条教训：名字像，不等于就是它
-
-给一款游戏的反作弊栈做检测面测绘，第一版写了"七库分工"：哪个库管加密、哪个管环境检测、
-哪个是硬件画像——**7 个库，错了 4 个。**
-
-| 库 | 名字给人的联想 | 实际是 | 一击必中的证据 |
-|---|---|---|---|
-| `libtapsdkcore.so` | "tsdk" + 656 个 crypto 符号 → ACE 加密核心 | **TapTap SDK 的日志上报** | `Java_com_taptap_sdk_openlog_...` |
-| `libthemis.so` | 希腊神话「法律」→ 环境检测库 | **TapTap SDK themis** | `Java_com_taptap_sdk_themis_lite_...` |
-| `libmagt_sdk.so` | Rust 符号 → 新一代反作弊组件 | **联发科 MAGT 性能调度** | `Java_com_mediatek_magt_...` |
-| `libRoosterNN.so` | "NN" → 硬件画像/神经检测 | **阿里巴巴 MNN 推理引擎**（开源） | `_ZN3MNN7Express...` |
-
-四个错的共同点：**全部依赖"名字的语义联想"，没有一条依赖"产物里的机械证据"。**
-
-这个错误类型在同一项目里重复了不止一次——`getRootState`/`magisk` 来自极光推送内嵌的
-RootBeer，`test-keys`/`goldfish` 来自 Sentry，`frida` 来自极验。全部与目标 App 的反作弊无关。
-**于是"代码里有一堆 root 检测"这个结论整体作废。**
-
-四条硬判据（都由工具链机械生成，人改不动）：
-
-```
-JNI 命名空间      Java_com_taptap_sdk_...        ← 改名要同步改 Java 侧 native 声明
-CI 构建路径       /runner/work/tapsdk-monorepo/  ← 编译机绝对路径，编译时烤进二进制
-C++ mangled       _ZN3MNN...                     ← 由编译器按 namespace 生成
-自有包名引用      com.tencent.tmgp.dfm           ← 只可能出现在自家代码里
-```
-
-判定顺序：**先扫 `Java_` 前缀（5 秒），再扫 CI 路径，最后才看 mangled 符号。**
-一步能定的事，不要靠语义推断十分钟。
-
-对应技能：[`anticheat-surface-recon`](anticheat-surface-recon/)，
-细则在 `references/attribution_rules.md`（含五类假阳性：`clone` / `proxy` / `GOT` / X.509 扩展名 / `gettimeofday`）。
-
-**另一个同源结论**：静态搜检测路径在反作弊栈上**完全失效**——8 个库里 `/proc|/dev|/sys` 路径串
-命中 ≤1 条，而接口名（`ms_open_file`、`tss_sdk_send_data_to_svr`）是明文的。
-它对"接口名"不加密，对"探测路径表"加密或云控下发。所以清单只能靠**内核审计**被动还原：
-
-```
-SELinux = Permissive  →  App 访问一个"策略应拒"的目标
-                      →  内核写 avc denied 但放行执行
-                      →  logcat 里就有它完整的探测清单（实测 64 个路径 / 8 个能力探针）
-```
-
-这不是绕过检测，是**把它的检测动作变成观测对象**。
-
----
-
 ## 免责声明
 
 本仓库为**方法论与工具**集合，用于安全研究、恶意样本分析、自有应用调试与授权范围内的渗透测试。
 
 请勿用于未授权的商业软件破解。使用者需自行承担合规责任。
-
-**明确不在本仓库范围内**：任何"规避 / 压制反作弊检测"的实现——hook、隐藏、伪造、定制内核、
-内存篡改。`anticheat-surface-recon` 只做**被动观测**（读内核审计日志、读 pcap、读二进制里的静态事实），
-不修改、不注入、不欺骗任何检测环节。这条边界既是合规要求，也是技术结论：
-检测面已经从"你装了什么"转向"你还能做什么"，后者无法靠隐藏解决。
