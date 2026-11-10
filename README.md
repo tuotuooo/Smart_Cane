@@ -1,6 +1,6 @@
-# APK 逆向七件套（Skill Matrix）
+# 逆向技能矩阵（Skill Matrix · 八件套）
 
-一套按「层次」拆开的 Android 逆向技能包。每一层都能单独使用，组合起来覆盖从连设备到出报告的完整链路。
+一套按「层次」拆开的逆向技能包（Android 客户端 + 网页端）。每一层都能单独使用，组合起来覆盖从连设备、抓网页到出报告的完整链路。
 
 设计原则：**能拆开复用**。只想连模拟器就只加载连接层，只想看静态信息就只加载静态层，上下文不浪费。
 
@@ -18,6 +18,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备 / 结论，五类对象�
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
+| 流量 | [`web-js-reverse`](web-js-reverse/) | **网页** | 抓 DevTools HAR → 本地下载 JS/HTML 分析 → 复现真实请求（DWR/JSON/HTML 异步 + WAF/JSLUIC/瑞数绕过） | 浏览器 + DevTools（或 Charles/Fiddler） |
 | 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** / **双核定位 + 行为注入（振动）** | 蓝牙适配器 或 adb |
 | 沉淀 | [`reverse-sediment`](reverse-sediment/) | **结论** | 结论质量审查（置信度分级·可复现校验·冲突召回·推翻记录）+ 归属路由 + 成文 + 全量技能索引 | 无 |
 
@@ -29,10 +30,13 @@ apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 
                       ├──> apk-runtime-dump       (运行时脱壳，需 root)
                       │         └──> apk-analyzer dexfile   (dump 产物回到静态链)
                       ├──> android-https-capture  (App ↔ 服务器)
+                      ├──> web-js-reverse         (Web ↔ 服务器：HAR + 本地 JS 分析 + 真实请求复现)
                       └──> ble-device-recon       (App ↔ 硬件)
                                   │
         任一层产出的判据/坑/工具 ──┴──> reverse-sediment  (审查 → 去重 → 归位 → 成文)
 ```
+
+> **新增 `web-js-reverse`（流量层的网页端分支）**：与 `android-https-capture` 同源（对象都是「网络流量」），但来源从 App 变成浏览器。它把「前端异步渲染 + 后端带反爬/WAF」的网页逆向成可稳定抓取的接口；通用方法论见 `web-js-reverse/SKILL.md`，落地案例（61 站采购监控 + 26 条实战坑）见 `web-js-reverse/references/suwan_case_study.md`。这一件把本仓库的适用面从「App / 固件逆向」扩到了「任何前端异步 + WAF 的网页端站点」。
 
 **两条最容易混的边界**：
 - 从 APK 里读出协议 → `apk-analyzer`；到真设备上验证协议 → `ble-device-recon`。
@@ -172,7 +176,7 @@ python $S index                                # 全量技能总览，决定"并
 
 ```bash
 cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
-      android-https-capture ble-device-recon reverse-sediment ~/.workbuddy/skills/
+      android-https-capture web-js-reverse ble-device-recon reverse-sediment ~/.workbuddy/skills/
 ```
 
 每个目录都是完整的 skill（`SKILL.md` + `references/` + `scripts/`），可独立安装、独立加载。
