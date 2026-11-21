@@ -1,11 +1,11 @@
-# 逆向技能矩阵（Skill Matrix · 八件套）
+# 逆向技能矩阵（Skill Matrix · 九件套）
 
-一套按「层次」拆开的逆向技能包（Android 客户端 + 网页端）。每一层都能单独使用，组合起来覆盖从连设备、抓网页到出报告的完整链路。
+一套按「层次」拆开的逆向技能包（Android 客户端 + 网页端 + 原生 Linux / 服务端）。每一层都能单独使用，组合起来覆盖从连设备、抓网页到出报告的完整链路。
 
 设计原则：**能拆开复用**。只想连模拟器就只加载连接层，只想看静态信息就只加载静态层，上下文不浪费。
 
 **分层依据是「对象边界」，不是功能分类**：
-APK 文件 / 进程内存 / 网络流量 / 物理设备 / 结论，五类对象方法完全不同，混用会让两份结论都失真。
+APK 文件 / 进程内存 / 网络流量 / 物理设备 / **原生 ELF 与服务端** / 结论，六类对象方法完全不同，混用会让两份结论都失真。
 
 ---
 
@@ -16,13 +16,14 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备 / 结论，五类对象�
 | 编排 | [`apk-reverse-master`](apk-reverse-master/) | — | 判断该走哪条路、验收标准、坑库、剧本 | 无 |
 | 连接 | [`android-emulator-adb`](android-emulator-adb/) | 设备 | 自动找 adb、连端口、设备画像（root/ABI/su/toybox） | 模拟器运行中 |
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
+| 原生 | [`linux-license-recon`](linux-license-recon/) | **ELF 二进制** + **服务端脚本/DB** | 授权系统三层优先级判定（服务端明文 > 字节码扩展 > ELF）、ctypes **oracle 化**真实校验函数、码布局从**比对点**反推、数据段字典表提取、**副作用判据**（返回值≠生效）、GPG/证书闸门是否在关键路径 | Python 3.8+（反汇编借目标机 objdump） |
 | 脱壳 | [`apk-runtime-dump`](apk-runtime-dump/) | **进程内存** | root 内存 dump（DEX/CDEX/Hermes）+ DEX 规范化 | root + toybox dd |
 | 流量 | [`android-https-capture`](android-https-capture/) | **网络** | 系统 CA 注入 + mitmproxy 抓 HTTPS + flows 解析 | root（或改包） |
 | 流量 | [`web-js-reverse`](web-js-reverse/) | **网页** | 抓 DevTools HAR → 本地下载 JS/HTML 分析 → 复现真实请求（DWR/JSON/HTML 异步 + WAF/JSLUIC/瑞数绕过） | 浏览器 + DevTools（或 Charles/Fiddler） |
 | 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** / **双核定位 + 行为注入（振动）** | 蓝牙适配器 或 adb |
 | 沉淀 | [`reverse-sediment`](reverse-sediment/) | **结论** | 结论质量审查（置信度分级·可复现校验·冲突召回·推翻记录）+ 归属路由 + 成文 + 全量技能索引 | 无 |
 
-依赖方向是单向的：编排层调用其余五个功能层，五个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。
+依赖方向是单向的：编排层调用其余六个功能层，六个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。
 
 ```
 apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 / 抓日志)
@@ -31,12 +32,15 @@ apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 
                       │         └──> apk-analyzer dexfile   (dump 产物回到静态链)
                       ├──> android-https-capture  (App ↔ 服务器)
                       ├──> web-js-reverse         (Web ↔ 服务器：HAR + 本地 JS 分析 + 真实请求复现)
-                      └──> ble-device-recon       (App ↔ 硬件)
+                      ├──> ble-device-recon       (App ↔ 硬件)
+                      └──> linux-license-recon    (Linux 原生二进制 + 服务端授权，无需设备)
                                   │
         任一层产出的判据/坑/工具 ──┴──> reverse-sediment  (审查 → 去重 → 归位 → 成文)
 ```
 
 > **新增 `web-js-reverse`（流量层的网页端分支）**：与 `android-https-capture` 同源（对象都是「网络流量」），但来源从 App 变成浏览器。它把「前端异步渲染 + 后端带反爬/WAF」的网页逆向成可稳定抓取的接口；通用方法论见 `web-js-reverse/SKILL.md`，落地案例（61 站采购监控 + 26 条实战坑）见 `web-js-reverse/references/suwan_case_study.md`。这一件把本仓库的适用面从「App / 固件逆向」扩到了「任何前端异步 + WAF 的网页端站点」。
+
+> **新增 `linux-license-recon`（原生层 · 新的一类对象）**：前八件的对象都绕不开 Android / 浏览器 / 蓝牙；这一类是**原生 Linux 世界的授权系统**——客户端是 ELF 校验器，判定逻辑在服务端明文脚本 + DB 里，旁边还有 GPG/证书闸门干扰判断。它的核心不是"怎么反汇编"，而是**先判该啃哪一层**：服务端明文源码 > Cython/字节码扩展 > ELF 反汇编。方法论见 `linux-license-recon/references/license_system_map.md`，完整案例（麒麟 KMS 厂商授权，含三次被推翻的结论）见 `references/case_kms_kylin.md`。
 
 **两条最容易混的边界**：
 - 从 APK 里读出协议 → `apk-analyzer`；到真设备上验证协议 → `ble-device-recon`。
@@ -162,6 +166,16 @@ python apk-analyzer/scripts/axml_edit.py exported in.xml out.xml --tag XxxActivi
 python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
 # 再用 apksig 重签 v2/v3（android-https-capture 的 cap.py info 也能判该不该改包）
 
+# 8b. 目标不是 APK 而是原生 Linux 程序 / 服务端授权 → 换对象，先判啃哪一层
+#     （服务端明文源码 > 字节码/so 扩展 > ELF 反汇编；90% 的判定逻辑在第一层）
+docker ps --format "{{.Names}}"                      # 服务端起没起
+docker exec <c> cat /proc/1/cmdline | tr '\0' ' '    # 明文 Python 还是编译产物
+# 把真实校验函数包成 oracle（不重写算法）
+python linux-license-recon/scripts/oracle_harness.py --lib lib.so --func validate \
+  --args c_char_p,c_char_p,c_char_p,c_char_p --call "<hw>,<serial>,<code>,02" --expect 1 --repeat 3
+# 生效判据看落盘，不看返回值
+cat /etc/.kyactivation* 2>/dev/null
+
 # 9. 收工：把这次的判据/坑/工具沉淀成技能资产（先审质量，再成文）
 S=~/.workbuddy/skills/reverse-sediment/scripts/sediment.py
 python $S template -o claims.json              # 空模板，含一条 refuted 示例
@@ -176,7 +190,7 @@ python $S index                                # 全量技能总览，决定"并
 
 ```bash
 cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
-      android-https-capture web-js-reverse ble-device-recon reverse-sediment ~/.workbuddy/skills/
+      android-https-capture web-js-reverse ble-device-recon linux-license-recon reverse-sediment ~/.workbuddy/skills/
 ```
 
 每个目录都是完整的 skill（`SKILL.md` + `references/` + `scripts/`），可独立安装、独立加载。

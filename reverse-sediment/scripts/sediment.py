@@ -45,6 +45,11 @@ CONFIDENCE = ("confirmed", "suspected", "refuted")
 # ---------------------------------------------------------------- 归属路由表
 # 顺序有讲究：越具体的越靠前。先命中先返回。
 ROUTES = [
+    # 授权/许可类先命中 linux-license-recon（含"签名/校验"字样，避免被 apk-analyzer 抢走）
+    (("激活码", "注册码", "序列号", "license", "授权", "许可", "造码", "算码", "oracle",
+      "校验函数", "ret=", "elf", "objdump", "ctypes", "cython", ".so 扩展", "so 扩展",
+      "gpg", "落盘", "服务端许可", "kms 授权"),
+     "linux-license-recon"),
     (("脱壳", "内存dump", "内存 dump", "/proc/pid/mem", "frida", "memdump", "dumpdex", "加固壳"),
      "apk-runtime-dump"),
     (("https", "抓包", "证书", "mitmproxy", "ca 证书", "tls", "sni", "h2"),

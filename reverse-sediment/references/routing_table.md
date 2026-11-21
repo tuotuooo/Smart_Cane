@@ -14,10 +14,12 @@
 | HTTPS 证书、mitmproxy、流量解析、接口还原 | `android-https-capture` | `references/` |
 | 模拟器连接、adb、logcat、设备画像 | `android-emulator-adb` | `SKILL.md` |
 | BLE/GATT/SPP、广播指纹、设备协议、固件、OTA、刷机 | `ble-device-recon` | 按 `references/` 分文件 |
+| 授权码/注册码/序列号算法、license 服务端、`.so` 扩展、ELF 反汇编、oracle 化、返回值与落盘不一致 | `linux-license-recon` | `references/license_system_map.md` / `pitfalls.md` / `case_*.md` |
 | 跨对象的方法论、决策树、通用判据、误判复盘 | `apk-reverse-master` | `references/methodology.md` / `pitfalls.md` |
 
 脚本自动推断用的关键词表在 `scripts/sediment.py` 的 `ROUTES`，顺序是"越具体越靠前"：
-脱壳相关先命中 `apk-runtime-dump`，不会被泛泛的 "apk" 抢走。
+授权/许可类关键词（含"签名/校验"字样）排在最前，先命中 `linux-license-recon`；
+脱壳相关其次命中 `apk-runtime-dump`，不会被泛泛的 "apk" 抢走。
 
 ---
 
@@ -54,8 +56,9 @@
 新建前必须过三问：
 
 1. **现有 skill 真的都不覆盖吗？** 先去 `index` 看全量清单，再 grep 关键词。
-2. **它的对象是新的类别吗？** 六件套里对象分别是 APK、进程、流量、设备、镜像、方法。
-   新 skill 应该对应**第六种对象**，不是"某个项目的专有细节"。
+2. **它的对象是新的类别吗？** 现在已知的对象类别是：APK 文件、进程内存、网络流量、
+   物理设备/固件镜像、原生 ELF 与服务端、结论（方法）。新 skill 应该对应**新的一类对象**，
+   不是"某个项目的专有细节"。
 3. **能独立触发吗？** 如果它只会在某个现有 skill 跑完之后顺手用一下，那它是那个 skill 的一节，不是新技能。
 
 三个都过才新建。否则合并。
