@@ -317,6 +317,25 @@ TEMPLATE = {
 
 
 # ---------------------------------------------------------------- CLI
+def resolve_root(explicit):
+    """解析扫描根目录。
+
+    优先级：显式 --root > 当前目录（仓库内，含 >=2 个 SKILL.md）> ~/.workbuddy/skills。
+    修复点：默认根曾是 ~/.workbuddy/skills，导致**在仓库里跑 index 列出的是本机
+    已装技能而非仓库九件套**（README「每次沉淀后必做 index」因此误导）。
+    """
+    if explicit:
+        return Path(os.path.expanduser(explicit))
+    cwd = Path.cwd()
+    try:
+        here = [p for p in cwd.iterdir() if (p / "SKILL.md").is_file()]
+    except OSError:
+        here = []
+    if len(here) >= 2:
+        return cwd
+    return Path.home() / ".workbuddy" / "skills"
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="逆向结论沉淀器：先卡质量，再成文")
@@ -330,28 +349,28 @@ def main():
 
     p = sub.add_parser("conflict", help="与现有 skill 做冲突召回")
     p.add_argument("claims")
-    p.add_argument("--root", default=str(Path.home() / ".workbuddy" / "skills"))
+    p.add_argument("--root", default=None,
+                   help="skill 根目录；缺省自动判断：当前目录含多个 SKILL.md 用当前目录，否则 ~/.workbuddy/skills")
     p.add_argument("--thr", type=float, default=0.32)
 
     p = sub.add_parser("route", help="推断归属 skill")
     p.add_argument("claims")
-    p.add_argument("--root", default=str(Path.home() / ".workbuddy" / "skills"))
+    p.add_argument("--root", default=None, help="同 conflict --root 的自动判断")
 
     p = sub.add_parser("render", help="渲染 markdown 片段")
     p.add_argument("claims")
     p.add_argument("-o", "--out", default=None)
 
     p = sub.add_parser("index", help="生成全部 skill 总览表")
-    p.add_argument("--root", default=str(Path.home() / ".workbuddy" / "skills"))
+    p.add_argument("--root", default=None, help="同 conflict --root 的自动判断")
 
     p = sub.add_parser("all", help="check + conflict + route + render")
     p.add_argument("claims")
-    p.add_argument("--root", default=str(Path.home() / ".workbuddy" / "skills"))
+    p.add_argument("--root", default=None, help="同 conflict --root 的自动判断")
     p.add_argument("-o", "--out", default=None)
 
     a = ap.parse_args()
-    root = Path(os.path.expanduser(
-        getattr(a, "root", str(Path.home() / ".workbuddy" / "skills"))))
+    root = resolve_root(getattr(a, "root", None))
 
     if a.cmd == "template":
         with open(a.out, "w", encoding="utf-8", newline="\n") as f:
@@ -360,6 +379,7 @@ def main():
         return 0
 
     if a.cmd == "index":
+        print(f"[i] 扫描根：{root}", file=sys.stderr)
         print(index(root))
         return 0
 

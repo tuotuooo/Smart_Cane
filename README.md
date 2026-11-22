@@ -13,7 +13,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备 / **原生 ELF 与服务
 
 | 层 | 技能 | 对象 | 单独能做什么 | 硬前置 |
 |----|------|------|-------------|--------|
-| 编排 | [`apk-reverse-master`](apk-reverse-master/) | — | 判断该走哪条路、验收标准、坑库、剧本 | 无 |
+| 编排 | [`apk-reverse-master`](apk-reverse-master/) | — | 判断该走哪条路、验收标准、坑库、剧本（**目前只写了 Android 分支**；网页分支 SOP 在 `web-js-reverse`、原生分支决策树在 `linux-license-recon` 内） | 无 |
 | 连接 | [`android-emulator-adb`](android-emulator-adb/) | 设备 | 自动找 adb、连端口、设备画像（root/ABI/su/toybox） | 模拟器运行中 |
 | 静态 | [`apk-analyzer`](apk-analyzer/) | **APK 文件** | 身份·签名·加固判定·Manifest·DEX 线索·Hermes·Flutter / **改包重签** | Python 3.8+（签名需 JDK） |
 | 原生 | [`linux-license-recon`](linux-license-recon/) | **ELF 二进制** + **服务端脚本/DB** | 授权系统三层优先级判定（服务端明文 > 字节码扩展 > ELF）、ctypes **oracle 化**真实校验函数、码布局从**比对点**反推、数据段字典表提取、**副作用判据**（返回值≠生效）、GPG/证书闸门是否在关键路径 | Python 3.8+（反汇编借目标机 objdump） |
@@ -23,7 +23,7 @@ APK 文件 / 进程内存 / 网络流量 / 物理设备 / **原生 ELF 与服务
 | 无线 | [`ble-device-recon`](ble-device-recon/) | **物理设备** + **固件镜像** | BLE 扫描/GATT 枚举/SPP 探测 / **零 root 抓 HCI 还原私有协议** / **OTA 通道识别 + 整链路刷写** / **镜像手术（定位基址·注入代码·加 GUI 应用·交互式界面·重签打包）** / **双核定位 + 行为注入（振动）** | 蓝牙适配器 或 adb |
 | 沉淀 | [`reverse-sediment`](reverse-sediment/) | **结论** | 结论质量审查（置信度分级·可复现校验·冲突召回·推翻记录）+ 归属路由 + 成文 + 全量技能索引 | 无 |
 
-依赖方向是单向的：编排层调用其余六个功能层，六个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。
+依赖方向是单向的：编排层调用其余六个功能层，六个功能层之间互不依赖；沉淀层横向收口，把任意层的产出固化成资产。**编排层的剧本目前只覆盖 Android 分支**；网页与原生分支的决策树内置于各自 SKILL.md——等分支再多，再考虑抽通用编排层。
 
 ```
 apk-reverse-master  ──┬──> android-emulator-adb   (连设备 / 装包 / 抓日志)

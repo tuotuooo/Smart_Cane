@@ -21,6 +21,11 @@
 授权/许可类关键词（含"签名/校验"字样）排在最前，先命中 `linux-license-recon`；
 脱壳相关其次命中 `apk-runtime-dump`，不会被泛泛的 "apk" 抢走。
 
+> **编排剧本的覆盖范围**：`apk-reverse-master` 目前只写了 Android 分支的剧本；
+> 网页分支的 SOP 在 `web-js-reverse`、原生分支的决策树在 `linux-license-recon`
+> 各自的 SKILL.md 内。某类对象还没有编排剧本时，先在对象 skill 内自洽，不强行回路由；
+> 等分支再多再抽通用编排层（而不是提前抽象）。
+
 ---
 
 ## 二、三条边界判断（实战里最容易判错的）
