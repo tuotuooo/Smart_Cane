@@ -168,6 +168,9 @@ python apk-analyzer/scripts/repack_apk.py app.apk patched.apk --manifest out.xml
 
 # 8b. 目标不是 APK 而是原生 Linux 程序 / 服务端授权 → 换对象，先判啃哪一层
 #     （服务端明文源码 > 字节码/so 扩展 > ELF 反汇编；90% 的判定逻辑在第一层）
+# 靶机是本地 VMware VM？"连不上"分三层：VM 没开机 / IP 漂移 / SSH 拒绝（见 target_access.md）
+"/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe" list     # VM 在跑吗
+"/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe" start "<vmx>" nogui
 docker ps --format "{{.Names}}"                      # 服务端起没起
 docker exec <c> cat /proc/1/cmdline | tr '\0' ' '    # 明文 Python 还是编译产物
 # 把真实校验函数包成 oracle（不重写算法）

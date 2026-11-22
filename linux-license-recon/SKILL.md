@@ -95,12 +95,15 @@ objdump -h target.so | grep -E "rodata|bss"
 
 ## 硬前置
 
+- **靶机在线**——服务端跑在本地 VMware 虚拟机里时，先过 `references/target_access.md`
+  （"连不上"分三层：VM 没开机 / IP 漂移 / SSH 拒绝，顺序排查，别跳层）
 - Python 3.8+（`ctypes` 标准库，无需第三方）
 - 目标 `.so` 与目标机架构一致（跨架构请直接在目标机上跑）
 - 反汇编用目标机自带的 `objdump`/`nm`（本地没有 binutils 就别硬装，见 `references/pitfalls.md` 坑 7）
 
 ## 文档索引
 
+- `references/target_access.md` — 靶机接入：VMware 定位/启动（vmrun）、宿主机网段判断（VMnet1/VMnet8）、DHCP 漂移重定位、SSH 探测；现象→判读表
 - `references/license_system_map.md` — 授权系统对象地图：三层优先级、oracle 化方法、比对点反推、字典表提取、副作用判据
 - `references/pitfalls.md` — 8 个实测坑（返回值骗人、hook 残留、缓存、PIE 布局、日期多对一、占位名误导…）
 - `references/case_kms_kylin.md` — 完整案例：麒麟 KMS 厂商授权，从"以为做不到"到 `ret=0 永久激活`，含被推翻的三个结论
