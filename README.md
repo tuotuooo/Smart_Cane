@@ -71,7 +71,15 @@ APK 里挖厂商锚点（so 名 / 包前缀 / UUID 尾段 ASCII / DWARF 源码�
 
 | 篇章 | 技能 | 对象 | 单独能做什么 | 硬前置 |
 |----|------|------|-------------|--------|
-| 人篇章 | [`human-social-engineering`](human-social-engineering/) | **感知·归因·框架** | Skill 0 总纲：让成本/边界/价值被准确看见，让成果有名字责任有归属，不接对方框架、把证明题换成选择题、书面留痕 | 无 |
+| 人篇章 | [`human-social-engineering`](human-social-engineering/) | **感知·归因·框架**（Skill 0） | 总纲：让成本/边界/价值被准确看见，让成果有名字责任有归属，不接对方框架、把证明题换成选择题、书面留痕 | 无 |
+| 人篇章 | [`human-power-analysis`](human-power-analysis/) | 权力动态（Skill 1） | 画权力地图、识别策略、判断稳定机制、评估自身风险，输出不站队/不传话的防御策略 | 无 |
+| 人篇章 | [`human-review-agent`](human-review-agent/) | 发前预审（Skill 2） | 用 +1 视角对汇报稿/PPT/邮件/微信做七项预审：结论前置、成果量化、范围精炼、风险边界、资源选项、政治安全、可留痕 | 无 |
+| 人篇章 | [`human-reporting-structure`](human-reporting-structure/) | 汇报结构（Skill 3） | 三问定调 + 五段结构 + why/value 重点 + 按听众分配深度 + 先给 5 页骨架 | 无 |
+| 人篇章 | [`human-resource-antippua`](human-resource-antippua/) | 资源/反PUA（Skill 4） | 把"要钱"换成项目条件决策，给选项不给账单，顺水推舟落额度/范围/节点并留痕 | 无 |
+| 人篇章 | [`human-cross-dept-boundary`](human-cross-dept-boundary/) | 跨部门边界（Skill 5） | 统一需求入口、让打断成本可见、设 WIP 上限、成果写成可复用资产 | 无 |
+| 人篇章 | [`human-client-risk`](human-client-risk/) | 客户风险（Skill 6） | 风险告知代替免责、售后指向明确路径、给三条路、需求只记录不承诺 | 无 |
+| 人篇章 | [`human-internal-transfer`](human-internal-transfer/) | 转岗（Skill 7） | 找技术交集、让作品说话、让目标部门先开口，最后找 +1 谈并主动提交接 | 无 |
+| 人篇章 | [`human-emotion-positioning`](human-emotion-positioning/) | 情绪定位（Skill 8） | 把自我怀疑转成结构问题 + 可执行动作，建立可迁移证据，评估退出时机 | 无 |
 
 `human-social-engineering` 是这一线的 **Skill 0**——它是组织行为学 / 防御策略类 Skill 的底层操作系统。核心判断只有一句：
 
@@ -80,6 +88,22 @@ APK 里挖厂商锚点（so 名 / 包前缀 / UUID 尾段 ASCII / DWARF 源码�
 三根支柱：**感知管理**（成本/边界/价值可见）、**归因设计**（成果留痕、责任明确）、**框架控制**（不接动机指控，转成条件请对方决策）。四步流程：识别框架 → 翻译成对方能结算的单位 → 给选项不给证明题 → 书面留痕。高频场景的话术对照见 `human-social-engineering/references/phrasebook.md`。
 
 **定位是防御不是操控**：只做准确呈现、边界管理、风险告知、决策请求；不欺骗、不诱导、不打压。这是 Skill 0 的使用前提，不是附加条款。
+
+Skill 1–8 是这一线的专项技能，**均可独立加载使用**，但都建立在 Skill 0 的框架免疫逻辑之上——Skill 0 是人篇章的底层操作系统。每个 Skill 都含五段式：定位 / 触发场景 / 核心动作 / 关键话术 / 红线。
+
+### 技能调用顺序
+
+| 场景 | 先用 | 再用 |
+|------|------|------|
+| 空降领导 / 组织调整 | Skill 1 权力分析 | Skill 8 情绪定位 |
+| 写汇报 / PPT | Skill 3 汇报结构 | Skill 2 审稿分身 |
+| 要资源 / 被说“要钱” | Skill 4 反 PUA | Skill 2 审稿分身 |
+| 跨部门被消耗 | Skill 5 边界管理 | Skill 8 情绪定位 |
+| 客户风险沟通 | Skill 6 客户边界 | Skill 2 审稿分身 |
+| 想转岗 | Skill 7 转岗策略 | Skill 1 权力分析 |
+| 持续内耗 | Skill 8 情绪定位 | Skill 1 权力分析 |
+
+**一句话总纲**：看结构（Skill 1）→ 定框架（Skill 3）→ 划边界（Skill 4/5/6）→ 留证据（Skill 2/8）→ 择机动（Skill 7）。不猜全集，先锚定；不自证清白，只让对方做决策；不把评价权全部交出去，也不把情绪当武器。
 
 > 这一线刻意与逆向技术线分开：技术线的"风控对抗/反检测"针对机器判定，人篇章的"框架免疫"针对人的认知框架。两者方法论不同，不应混用——把"绕过机器风控"的思路用到人身上，正是这个 Skill 的红线。
 
@@ -201,8 +225,11 @@ python $S index                                # 全量技能总览，决定"并
 cp -r android-emulator-adb apk-analyzer apk-runtime-dump apk-reverse-master \
       android-https-capture web-js-reverse ble-device-recon reverse-sediment ~/.workbuddy/skills/
 
-# 人篇章（软技能线，可选）
-cp -r human-social-engineering ~/.workbuddy/skills/
+# 人篇章（软技能线，可选）：Skill 0 总纲 + Skill 1–8 专项
+cp -r human-social-engineering human-power-analysis human-review-agent \
+      human-reporting-structure human-resource-antippua human-cross-dept-boundary \
+      human-client-risk human-internal-transfer human-emotion-positioning \
+      ~/.workbuddy/skills/
 ```
 
 每个目录都是完整的 skill（`SKILL.md` + `references/` + `scripts/`），可独立安装、独立加载。
